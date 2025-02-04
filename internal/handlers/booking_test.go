@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"telegram-class-bot/internal/models"
-	"telegram-class-bot/internal/storage"
 )
 
 func TestHandleBooking(t *testing.T) {
