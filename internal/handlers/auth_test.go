@@ -42,7 +42,7 @@ func TestHandleLogin(t *testing.T) {
 
 			// Create a mock bot
 			mockBot := NewMockBot(t)
-			mockBot.On("Send", mock.MatchedBy(func(msg tgbotapi.MessageConfig) bool {
+			mockBot.EXPECT().Send(mock.MatchedBy(func(msg tgbotapi.MessageConfig) bool {
 				if tt.wantErr {
 					assert.Contains(t, msg.Text, tt.expected)
 				} else {

@@ -44,7 +44,7 @@ func TestHandleBooking(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockBot := NewMockBot(t)
-			mockBot.On("Send", mock.MatchedBy(func(msg tgbotapi.MessageConfig) bool {
+			mockBot.EXPECT().Send(mock.MatchedBy(func(msg tgbotapi.MessageConfig) bool {
 				assert.Equal(t, tt.expectedMsg, msg.Text)
 				assert.Equal(t, tt.chatID, msg.ChatID)
 				return true
@@ -99,7 +99,7 @@ func TestHandleRemoveBooking(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockBot := NewMockBot(t)
-			mockBot.On("Send", mock.MatchedBy(func(msg tgbotapi.MessageConfig) bool {
+			mockBot.EXPECT().Send(mock.MatchedBy(func(msg tgbotapi.MessageConfig) bool {
 				assert.Equal(t, tt.expectedMsg, msg.Text)
 				assert.Equal(t, tt.chatID, msg.ChatID)
 				return true
