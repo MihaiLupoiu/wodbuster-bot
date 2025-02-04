@@ -15,7 +15,11 @@ func HandleLogin(bot Bot, update tgbotapi.Update) {
 	if len(args) != 3 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
 			"Please provide username and password: /login username password")
-		bot.Send(msg)
+		if _, err := bot.Send(msg); err != nil {
+			slog.Error("Failed to send login format message",
+				"error", err,
+				"chat_id", update.Message.Chat.ID)
+		}
 		return
 	}
 
@@ -27,7 +31,11 @@ func HandleLogin(bot Bot, update tgbotapi.Update) {
 	if err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
 			"Authentication failed. Please try again.")
-		bot.Send(msg)
+		if _, err := bot.Send(msg); err != nil {
+			slog.Error("Failed to send authentication failure message",
+				"error", err,
+				"chat_id", update.Message.Chat.ID)
+		}
 		return
 	}
 
@@ -39,7 +47,11 @@ func HandleLogin(bot Bot, update tgbotapi.Update) {
 
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
 		"Successfully logged in! You can now use /book to reserve classes.")
-	bot.Send(msg)
+	if _, err := bot.Send(msg); err != nil {
+		slog.Error("Failed to send login success message",
+			"error", err,
+			"chat_id", update.Message.Chat.ID)
+	}
 }
 
 func authenticateUser(username, password string) (string, error) {
