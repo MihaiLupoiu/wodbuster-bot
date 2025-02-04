@@ -1,10 +1,11 @@
 package handlers
 
 import (
-	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"telegram-class-bot/internal/storage"
 )
 
 func TestHandleLogin(t *testing.T) {
@@ -46,8 +47,10 @@ func TestHandleLogin(t *testing.T) {
 			handleLogin(bot, update)
 
 			// Verify the results
-			if tt.wantErr && !strings.Contains(bot.lastMessage, tt.expected) {
-				t.Errorf("expected error message containing %q, got %q", tt.expected, bot.lastMessage)
+			if tt.wantErr {
+				assert.Contains(t, bot.lastMessage, tt.expected)
+			} else {
+				assert.Contains(t, bot.lastMessage, tt.expected)
 			}
 		})
 	}

@@ -1,11 +1,12 @@
 package handlers
 
 import (
-	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"telegram-class-bot/internal/models"
+	"telegram-class-bot/internal/storage"
 )
 
 func TestHandleBooking(t *testing.T) {
@@ -47,8 +48,10 @@ func TestHandleBooking(t *testing.T) {
 			handleBooking(bot, update)
 
 			// Verify the results
-			if tt.wantErr && !strings.Contains(bot.lastMessage, tt.expected) {
-				t.Errorf("expected error message containing %q, got %q", tt.expected, bot.lastMessage)
+			if tt.wantErr {
+				assert.Contains(t, bot.lastMessage, tt.expected)
+			} else {
+				assert.Contains(t, bot.lastMessage, tt.expected)
 			}
 		})
 	}
@@ -66,10 +69,6 @@ func TestFormatScheduleMessage(t *testing.T) {
 	result := formatScheduleMessage(schedule)
 	expected := "Available Classes:"
 
-	if !strings.Contains(result, expected) {
-		t.Errorf("expected message to contain %q", expected)
-	}
-	if !strings.Contains(result, "class123") {
-		t.Errorf("expected message to contain class ID")
-	}
+	assert.Contains(t, result, expected)
+	assert.Contains(t, result, "class123")
 }
