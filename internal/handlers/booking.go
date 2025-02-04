@@ -2,7 +2,11 @@ package handlers
 
 import (
 	"fmt"
+	"log"
+	"strings"
+	
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"telegram-class-bot/internal/models"
 )
 
 func handleBooking(bot *tgbotapi.BotAPI, update tgbotapi.Update) {

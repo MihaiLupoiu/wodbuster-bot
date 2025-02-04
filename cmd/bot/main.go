@@ -7,11 +7,13 @@ import (
 
 	"github.com/go-co-op/gocron"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"telegram-class-bot/internal/handlers"
+	"telegram-class-bot/internal/models"
 )
 
 var (
 	// Store user sessions (you might want to use Redis in production)
-	userSessions = make(map[int64]UserSession)
+	userSessions = make(map[int64]models.UserSession)
 )
 
 func main() {
