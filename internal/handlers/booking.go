@@ -32,8 +32,7 @@ func HandleBooking(bot Bot, update tgbotapi.Update) {
 	}
 
 	// Call your booking API
-	err := bookClass(day, hour, session.Username, session.Token)
-	if err != nil {
+	if err := bookClass(day, hour, session.Username, session.Token); err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
 			"Failed to book class. Please try again.")
 		bot.Send(msg)
@@ -59,8 +58,7 @@ func HandleRemoveBooking(bot Bot, update tgbotapi.Update) {
 	session := userSessions[update.Message.Chat.ID]
 
 	// Call your remove booking API
-	err := removeBooking(day, hour, session.Username, session.Token)
-	if err != nil {
+	if err := removeBooking(day, hour, session.Username, session.Token); err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
 			"Failed to remove booking. Please try again.")
 		bot.Send(msg)
@@ -85,7 +83,9 @@ func SendAvailableSchedule(bot Bot) {
 	// Implement API call to get available schedule
 	schedule, err := getAvailableClasses()
 	if err != nil {
-		slog.Error("Failed to get class schedule", "error", err)
+		slog.Error("Failed to get class schedule", 
+			"error", err,
+			"function", "SendAvailableSchedule")
 		return
 	}
 

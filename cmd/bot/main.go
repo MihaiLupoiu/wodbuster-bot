@@ -47,11 +47,14 @@ func main() {
 		"debug_mode", bot.Debug)
 
 	// Initialize scheduler
-	scheduler := gocron.NewScheduler(time.UTC)
-	scheduler.Every(1).Sunday().At("00:00").Do(func() {
+	s := gocron.NewScheduler(time.UTC)
+	if _, err := s.Every(1).Sunday().At("00:00").Do(func() {
 		handlers.SendAvailableSchedule(bot)
-	})
-	scheduler.StartAsync()
+	}); err != nil {
+		slog.Error("Failed to schedule weekly task", "error", err)
+		os.Exit(1)
+	}
+	s.StartAsync()
 
 	updateConfig := tgbotapi.NewUpdate(0)
 	updateConfig.Timeout = 60
