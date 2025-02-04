@@ -5,7 +5,7 @@ go 1.21
 require (
 	github.com/go-co-op/gocron v1.37.0
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
-	github.com/stretchr/testify v1.8.4
+	github.com/stretchr/testify v1.10.0
 )
 
 require (
