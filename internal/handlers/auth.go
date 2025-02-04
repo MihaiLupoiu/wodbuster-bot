@@ -9,7 +9,7 @@ import (
 
 var userSessions = make(map[int64]models.UserSession)
 
-func handleLogin(bot Bot, update tgbotapi.Update) {
+func HandleLogin(bot Bot, update tgbotapi.Update) {
 	args := strings.Split(update.Message.Text, " ")
 	if len(args) != 3 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
@@ -47,7 +47,7 @@ func authenticateUser(username, password string) (string, error) {
 	return "", nil
 }
 
-func isAuthenticated(chatID int64) bool {
+func IsAuthenticated(chatID int64) bool {
 	session, exists := userSessions[chatID]
 	return exists && session.IsAuthenticated
 }

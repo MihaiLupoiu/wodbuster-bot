@@ -8,12 +8,6 @@ import (
 	"github.com/go-co-op/gocron"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"telegram-class-bot/internal/handlers"
-	"telegram-class-bot/internal/models"
-)
-
-var (
-	// Store user sessions (you might want to use Redis in production)
-	userSessions = make(map[int64]models.UserSession)
 )
 
 func main() {
@@ -28,7 +22,7 @@ func main() {
 	// Initialize scheduler
 	scheduler := gocron.NewScheduler(time.UTC)
 	scheduler.Every(1).Sunday().At("00:00").Do(func() {
-		sendAvailableSchedule(bot)
+		handlers.SendAvailableSchedule(bot)
 	})
 	scheduler.StartAsync()
 
@@ -53,13 +47,13 @@ func handleUpdate(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
 	case "start":
 		msg.Text = "Welcome! Please use /login to authenticate first."
 	case "login":
-		handleLogin(bot, update)
+		handlers.HandleLogin(bot, update)
 		return
 	case "book":
-		if !isAuthenticated(update.Message.Chat.ID) {
+		if !handlers.IsAuthenticated(update.Message.Chat.ID) {
 			msg.Text = "Please login first using /login"
 		} else {
-			handleBooking(bot, update)
+			handlers.HandleBooking(bot, update)
 			return
 		}
 	default:

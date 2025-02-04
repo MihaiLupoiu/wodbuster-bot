@@ -9,7 +9,7 @@ import (
 	"telegram-class-bot/internal/models"
 )
 
-func handleBooking(bot Bot, update tgbotapi.Update) {
+func HandleBooking(bot Bot, update tgbotapi.Update) {
 	args := strings.Split(update.Message.Text, " ")
 	if len(args) != 2 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
@@ -35,7 +35,7 @@ func handleBooking(bot Bot, update tgbotapi.Update) {
 	bot.Send(msg)
 }
 
-func sendAvailableSchedule(bot Bot) {
+func SendAvailableSchedule(bot Bot) {
 	// Implement API call to get available schedule
 	schedule, err := getAvailableClasses()
 	if err != nil {
