@@ -8,6 +8,8 @@ type UserSession struct {
 
 type ClassSchedule struct {
 	ID        string
-	DateTime  string
+	Day       string    // e.g., "Monday", "Tuesday"
+	Hour      string    // e.g., "10:00"
 	Available bool
+	BookedBy  string    // Username of the person who booked
 }

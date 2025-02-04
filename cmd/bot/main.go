@@ -56,8 +56,21 @@ func handleUpdate(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
 			handlers.HandleBooking(bot, update)
 			return
 		}
+	case "remove":
+		if !handlers.IsAuthenticated(update.Message.Chat.ID) {
+			msg.Text = "Please login first using /login"
+		} else {
+			handlers.HandleRemoveBooking(bot, update)
+			return
+		}
+	case "help":
+		msg.Text = "Available commands:\n" +
+			"/login username password - Login to the system\n" +
+			"/book day hour - Book a class (e.g., /book Monday 10:00)\n" +
+			"/remove day hour - Remove your booking (e.g., /remove Monday 10:00)\n" +
+			"/help - Show this help message"
 	default:
-		msg.Text = "I don't know that command"
+		msg.Text = "I don't know that command. Use /help to see available commands"
 	}
 
 	if _, err := bot.Send(msg); err != nil {

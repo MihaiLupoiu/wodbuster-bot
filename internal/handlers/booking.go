@@ -11,18 +11,28 @@ import (
 
 func HandleBooking(bot Bot, update tgbotapi.Update) {
 	args := strings.Split(update.Message.Text, " ")
-	if len(args) != 2 {
+	if len(args) != 3 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
-			"Please provide class ID: /book <class_id>")
+			"Please provide day and hour: /book <day> <hour> (e.g., /book Monday 10:00)")
 		bot.Send(msg)
 		return
 	}
 
-	classID := args[1]
+	day := strings.Title(strings.ToLower(args[1]))
+	hour := args[2]
 	session := userSessions[update.Message.Chat.ID]
 
+	// Validate day
+	validDays := []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
+	if !contains(validDays, day) {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
+			"Invalid day. Please use: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, or Sunday")
+		bot.Send(msg)
+		return
+	}
+
 	// Call your booking API
-	err := bookClass(classID, session.Token)
+	err := bookClass(day, hour, session.Username, session.Token)
 	if err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
 			"Failed to book class. Please try again.")
@@ -31,8 +41,44 @@ func HandleBooking(bot Bot, update tgbotapi.Update) {
 	}
 
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
-		fmt.Sprintf("Successfully booked class %s!", classID))
+		fmt.Sprintf("Successfully booked class for %s at %s!", day, hour))
 	bot.Send(msg)
+}
+
+func HandleRemoveBooking(bot Bot, update tgbotapi.Update) {
+	args := strings.Split(update.Message.Text, " ")
+	if len(args) != 3 {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
+			"Please provide day and hour: /remove <day> <hour> (e.g., /remove Monday 10:00)")
+		bot.Send(msg)
+		return
+	}
+
+	day := strings.Title(strings.ToLower(args[1]))
+	hour := args[2]
+	session := userSessions[update.Message.Chat.ID]
+
+	// Call your remove booking API
+	err := removeBooking(day, hour, session.Username, session.Token)
+	if err != nil {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
+			"Failed to remove booking. Please try again.")
+		bot.Send(msg)
+		return
+	}
+
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
+		fmt.Sprintf("Successfully removed booking for %s at %s!", day, hour))
+	bot.Send(msg)
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
 
 func SendAvailableSchedule(bot Bot) {
@@ -53,19 +99,42 @@ func SendAvailableSchedule(bot Bot) {
 }
 
 func formatScheduleMessage(schedule []models.ClassSchedule) string {
-	// Format the schedule into a readable message
 	var sb strings.Builder
-	sb.WriteString("Available Classes:\n\n")
+	sb.WriteString("Class Schedule:\n\n")
 	
+	// Group classes by day
+	scheduleByDay := make(map[string][]models.ClassSchedule)
 	for _, class := range schedule {
-		sb.WriteString(fmt.Sprintf("ID: %s\nTime: %s\n\n", 
-			class.ID, class.DateTime))
+		scheduleByDay[class.Day] = append(scheduleByDay[class.Day], class)
 	}
 	
-	sb.WriteString("\nTo book a class, use /book <class_id>")
+	// Sort days
+	days := []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
+	for _, day := range days {
+		if classes, exists := scheduleByDay[day]; exists {
+			sb.WriteString(fmt.Sprintf("=== %s ===\n", day))
+			for _, class := range classes {
+				status := "Available"
+				if !class.Available {
+					status = fmt.Sprintf("Booked by %s", class.BookedBy)
+				}
+				sb.WriteString(fmt.Sprintf("Time: %s - %s\n", class.Hour, status))
+			}
+			sb.WriteString("\n")
+		}
+	}
+	
+	sb.WriteString("\nTo book a class, use /book <day> <hour>")
+	sb.WriteString("\nTo remove your booking, use /remove <day> <hour>")
 	return sb.String()
 }
-func bookClass(classID string, token string) error {
+func bookClass(day string, hour string, username string, token string) error {
+	// TODO: Implement actual API call
+	// This is a mock implementation
+	return nil
+}
+
+func removeBooking(day string, hour string, username string, token string) error {
 	// TODO: Implement actual API call
 	// This is a mock implementation
 	return nil
@@ -77,8 +146,10 @@ func getAvailableClasses() ([]models.ClassSchedule, error) {
 	return []models.ClassSchedule{
 		{
 			ID:        "class123",
-			DateTime:  "2025-02-04 10:00",
+			Day:       "Monday",
+			Hour:      "10:00",
 			Available: true,
+			BookedBy:  "",
 		},
 	}, nil
 }
