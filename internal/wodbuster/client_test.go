@@ -62,7 +62,7 @@ func TestGetAvailableClasses(t *testing.T) {
 
 	classes, err := client.GetAvailableClasses()
 	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrNotImplemented)
+	assert.Contains(t, err.Error(), "failed to navigate")
 	assert.Nil(t, classes)
 }
 
@@ -72,7 +72,7 @@ func TestBookClass(t *testing.T) {
 
 	err := client.BookClass("Monday", "10:00")
 	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrNotImplemented)
+	assert.Contains(t, err.Error(), "failed to navigate")
 }
 
 func TestRemoveBooking(t *testing.T) {
@@ -81,5 +81,5 @@ func TestRemoveBooking(t *testing.T) {
 
 	err := client.RemoveBooking("Monday", "10:00")
 	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrNotImplemented)
+	assert.Contains(t, err.Error(), "failed to navigate")
 }
