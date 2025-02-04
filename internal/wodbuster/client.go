@@ -2,6 +2,8 @@ package wodbuster
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
