@@ -1,5 +1,7 @@
 # Telegram Class Booking Bot
 
+[![CI](https://github.com/yourusername/telegram-class-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/telegram-class-bot/actions/workflows/ci.yml)
+
 A Telegram bot that allows users to book and manage fitness class schedules.
 
 ## Features
