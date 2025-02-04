@@ -6,13 +6,15 @@ import (
 	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/handlers"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/wodbuster"
 	"github.com/go-co-op/gocron"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type App struct {
-	bot    *tgbotapi.BotAPI
-	config *Config
+	bot         *tgbotapi.BotAPI
+	config      *Config
+	wodbuster  *wodbuster.Client
 }
 
 func Initialize(envFile string) (*App, error) {
@@ -50,9 +52,17 @@ func New(config *Config) (*App, error) {
 		"username", bot.Self.UserName,
 		"debug_mode", bot.Debug)
 
+	wodClient, err := wodbuster.NewClient(config.Logger, config.WodbusterURL)
+	if err != nil {
+		config.Logger.Error("Failed to initialize wodbuster client",
+			"error", err)
+		return nil, err
+	}
+
 	return &App{
-		bot:    bot,
-		config: config,
+		bot:        bot,
+		config:     config,
+		wodbuster: wodClient,
 	}, nil
 }
 

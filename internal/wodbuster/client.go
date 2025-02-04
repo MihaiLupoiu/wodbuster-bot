@@ -48,11 +48,30 @@ var (
 
 func (c *Client) Login(username, password string) error {
 	if err := chromedp.Run(c.ctx,
+		// Navigate to login page
 		chromedp.Navigate(c.baseURL+"/login"),
+		
+		// Wait for form elements to be present
+		chromedp.WaitVisible(`//input[@name="username"]`),
+		chromedp.WaitVisible(`//input[@name="password"]`),
+		
+		// Fill in the form
+		chromedp.SendKeys(`//input[@name="username"]`, username),
+		chromedp.SendKeys(`//input[@name="password"]`, password),
+		
+		// Click login button
+		chromedp.Click(`//button[@type="submit"]`),
+		
+		// Wait for redirect or success element
+		chromedp.WaitVisible(`//div[contains(@class, "dashboard")]`, chromedp.BySearch),
 	); err != nil {
-		return fmt.Errorf("failed to navigate: %w", err)
+		return fmt.Errorf("login failed: %w", err)
 	}
-	return ErrNotImplemented
+
+	c.logger.Info("Successfully logged in", 
+		"username", username,
+		"url", c.baseURL)
+	return nil
 }
 
 func (c *Client) GetAvailableClasses() ([]ClassSchedule, error) {

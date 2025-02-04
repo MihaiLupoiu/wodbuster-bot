@@ -36,12 +36,24 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
-	client := setupTestClient(t)
-	defer client.Close()
+	t.Run("with valid credentials", func(t *testing.T) {
+		client := setupTestClient(t)
+		defer client.Close()
 
-	err := client.Login("test_user", "test_pass")
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrNotImplemented)
+		// This will fail in tests since we're not running a real server
+		err := client.Login("test_user", "test_pass")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "login failed")
+	})
+
+	t.Run("with empty credentials", func(t *testing.T) {
+		client := setupTestClient(t)
+		defer client.Close()
+
+		err := client.Login("", "")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "login failed")
+	})
 }
 
 func TestGetAvailableClasses(t *testing.T) {
