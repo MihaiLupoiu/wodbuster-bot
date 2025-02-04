@@ -9,7 +9,7 @@ import (
 	"telegram-class-bot/internal/models"
 )
 
-func handleBooking(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
+func handleBooking(bot Bot, update tgbotapi.Update) {
 	args := strings.Split(update.Message.Text, " ")
 	if len(args) != 2 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
@@ -35,7 +35,7 @@ func handleBooking(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
 	bot.Send(msg)
 }
 
-func sendAvailableSchedule(bot *tgbotapi.BotAPI) {
+func sendAvailableSchedule(bot Bot) {
 	// Implement API call to get available schedule
 	schedule, err := getAvailableClasses()
 	if err != nil {
@@ -52,7 +52,7 @@ func sendAvailableSchedule(bot *tgbotapi.BotAPI) {
 	}
 }
 
-func formatScheduleMessage(schedule []ClassSchedule) string {
+func formatScheduleMessage(schedule []models.ClassSchedule) string {
 	// Format the schedule into a readable message
 	var sb strings.Builder
 	sb.WriteString("Available Classes:\n\n")
@@ -64,4 +64,21 @@ func formatScheduleMessage(schedule []ClassSchedule) string {
 	
 	sb.WriteString("\nTo book a class, use /book <class_id>")
 	return sb.String()
+}
+func bookClass(classID string, token string) error {
+	// TODO: Implement actual API call
+	// This is a mock implementation
+	return nil
+}
+
+func getAvailableClasses() ([]models.ClassSchedule, error) {
+	// TODO: Implement actual API call
+	// This is a mock implementation
+	return []models.ClassSchedule{
+		{
+			ID:        "class123",
+			DateTime:  "2025-02-04 10:00",
+			Available: true,
+		},
+	}, nil
 }

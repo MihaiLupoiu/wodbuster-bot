@@ -12,7 +12,7 @@ import (
 
 var userSessions = make(map[int64]models.UserSession)
 
-func handleLogin(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
+func handleLogin(bot Bot, update tgbotapi.Update) {
 	args := strings.Split(update.Message.Text, " ")
 	if len(args) != 3 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
@@ -33,7 +33,7 @@ func handleLogin(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
 		return
 	}
 
-	userSessions[update.Message.Chat.ID] = UserSession{
+	userSessions[update.Message.Chat.ID] = models.UserSession{
 		IsAuthenticated: true,
 		Username:       username,
 		Token:          token,
