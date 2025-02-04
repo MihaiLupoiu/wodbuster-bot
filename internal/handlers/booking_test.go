@@ -44,7 +44,7 @@ func TestHandleBooking(t *testing.T) {
 			// Create a mock bot
 			bot := &MockBot{}
 			
-			handleBooking(bot, update)
+			HandleBooking(bot, update)
 
 			// Verify the results
 			if tt.wantErr {

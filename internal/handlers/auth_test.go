@@ -43,7 +43,7 @@ func TestHandleLogin(t *testing.T) {
 			// Create a mock bot
 			bot := &MockBot{}
 			
-			handleLogin(bot, update)
+			HandleLogin(bot, update)
 
 			// Verify the results
 			if tt.wantErr {
