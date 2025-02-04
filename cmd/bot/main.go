@@ -9,10 +9,11 @@ import (
 )
 
 func main() {
-	envFile := flag.String("e", "", "Path to environment file")
+	var envFile string
+	flag.StringVar(&envFile, "env", "", "Path to environment file")
 	flag.Parse()
 
-	app, err := app.Initialize(*envFile)
+	app, err := app.Initialize(envFile)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -16,7 +16,7 @@ build: tools generate create-build-dir ## Build the bot
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
 
 run: tools generate ## Run the bot
-	go run $(MAIN_PATH)
+	go run $(MAIN_PATH) -env=.env
 
 create-build-dir: ## Create the build directory
 	mkdir -p $(BUILD_DIR)
