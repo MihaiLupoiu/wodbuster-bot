@@ -8,17 +8,31 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const testBaseURL = "http://localhost:8080"
+
 func setupTestClient(t *testing.T) *Client {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	client, err := NewClient(logger)
+	client, err := NewClient(logger, testBaseURL)
 	assert.NoError(t, err)
 	return client
 }
 
 func TestNewClient(t *testing.T) {
-	client := setupTestClient(t)
-	assert.NotNil(t, client)
-	defer client.Close()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	t.Run("with valid URL", func(t *testing.T) {
+		client, err := NewClient(logger, testBaseURL)
+		assert.NoError(t, err)
+		assert.NotNil(t, client)
+		client.Close()
+	})
+
+	t.Run("with empty URL", func(t *testing.T) {
+		client, err := NewClient(logger, "")
+		assert.Error(t, err)
+		assert.ErrorIs(t, err, ErrMissingBaseURL)
+		assert.Nil(t, client)
+	})
 }
 
 func TestLogin(t *testing.T) {
@@ -26,7 +40,8 @@ func TestLogin(t *testing.T) {
 	defer client.Close()
 
 	err := client.Login("test_user", "test_pass")
-	assert.Error(t, err) // Expected error since method is not fully implemented
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotImplemented)
 }
 
 func TestGetAvailableClasses(t *testing.T) {
@@ -34,7 +49,8 @@ func TestGetAvailableClasses(t *testing.T) {
 	defer client.Close()
 
 	classes, err := client.GetAvailableClasses()
-	assert.Error(t, err) // Expected error since method is not fully implemented
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotImplemented)
 	assert.Nil(t, classes)
 }
 
@@ -43,7 +59,8 @@ func TestBookClass(t *testing.T) {
 	defer client.Close()
 
 	err := client.BookClass("Monday", "10:00")
-	assert.Error(t, err) // Expected error since method is not fully implemented
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotImplemented)
 }
 
 func TestRemoveBooking(t *testing.T) {
@@ -51,5 +68,6 @@ func TestRemoveBooking(t *testing.T) {
 	defer client.Close()
 
 	err := client.RemoveBooking("Monday", "10:00")
-	assert.Error(t, err) // Expected error since method is not fully implemented
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotImplemented)
 }
