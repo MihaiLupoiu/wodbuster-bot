@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -85,7 +85,7 @@ func SendAvailableSchedule(bot Bot) {
 	// Implement API call to get available schedule
 	schedule, err := getAvailableClasses()
 	if err != nil {
-		log.Printf("Error getting schedule: %v", err)
+		slog.Error("Failed to get class schedule", "error", err)
 		return
 	}
 

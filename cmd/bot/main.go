@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -11,18 +11,33 @@ import (
 )
 
 func main() {
+	// Initialize structured logging
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+	slog.SetDefault(logger)
+
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
-		log.Fatal("TELEGRAM_BOT_TOKEN environment variable is not set")
+		slog.Error("TELEGRAM_BOT_TOKEN environment variable is not set")
+		os.Exit(1)
+	}
+
+	if token == "your_bot_token_here" {
+		slog.Error("Please set a valid Telegram bot token")
+		os.Exit(1)
 	}
 
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
-		log.Fatalf("Error initializing bot: %v", err)
+		slog.Error("Failed to initialize bot", "error", err)
+		os.Exit(1)
 	}
 
 	bot.Debug = true
-	log.Printf("Authorized on account %s", bot.Self.UserName)
+	slog.Info("Bot authorized successfully", 
+		"username", bot.Self.UserName,
+		"debug_mode", bot.Debug)
 
 	// Initialize scheduler
 	scheduler := gocron.NewScheduler(time.UTC)
@@ -79,6 +94,8 @@ func handleUpdate(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
 	}
 
 	if _, err := bot.Send(msg); err != nil {
-		log.Println(err)
+		slog.Error("Failed to send message", 
+			"chat_id", update.Message.Chat.ID,
+			"error", err)
 	}
 }
