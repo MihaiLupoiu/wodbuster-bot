@@ -2,55 +2,132 @@ package handlers
 
 import (
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"telegram-class-bot/internal/models"
 )
 
+type MockBot struct {
+	lastMessage string
+	lastChatID  int64
+}
+
+func (m *MockBot) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+	msg, ok := c.(tgbotapi.MessageConfig)
+	if ok {
+		m.lastMessage = msg.Text
+		m.lastChatID = msg.ChatID
+	}
+	return tgbotapi.Message{}, nil
+}
+
 func TestHandleBooking(t *testing.T) {
 	tests := []struct {
-		name     string
-		message  string
-		wantErr  bool
-		expected string
+		name           string
+		input          string
+		chatID         int64
+		expectedMsg    string
+		authenticated  bool
 	}{
 		{
-			name:     "valid booking",
-			message:  "/book class123",
-			wantErr:  false,
-			expected: "Successfully booked class",
+			name:          "invalid format",
+			input:         "/book Monday",
+			chatID:        123,
+			expectedMsg:   "Please provide day and hour: /book <day> <hour> (e.g., /book Monday 10:00)",
+			authenticated: true,
 		},
 		{
-			name:     "invalid format",
-			message:  "/book",
-			wantErr:  true,
-			expected: "Please provide class ID",
+			name:          "invalid day",
+			input:         "/book InvalidDay 10:00",
+			chatID:        123,
+			expectedMsg:   "Invalid day. Please use: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, or Sunday",
+			authenticated: true,
+		},
+		{
+			name:          "valid booking",
+			input:         "/book Monday 10:00",
+			chatID:        123,
+			expectedMsg:   "Successfully booked class for Monday at 10:00!",
+			authenticated: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a mock update
+			mockBot := &MockBot{}
 			update := tgbotapi.Update{
 				Message: &tgbotapi.Message{
-					Text: tt.message,
 					Chat: &tgbotapi.Chat{
-						ID: 123456,
+						ID: tt.chatID,
 					},
+					Text: tt.input,
 				},
 			}
 
-			// Create a mock bot
-			bot := &MockBot{}
-			
-			HandleBooking(bot, update)
+			if tt.authenticated {
+				userSessions[tt.chatID] = models.UserSession{
+					IsAuthenticated: true,
+					Username:       "testuser",
+					Token:         "testtoken",
+				}
+			}
 
-			// Verify the results
-			if tt.wantErr {
-				assert.Contains(t, bot.lastMessage, tt.expected)
-			} else {
-				assert.Contains(t, bot.lastMessage, tt.expected)
+			HandleBooking(mockBot, update)
+
+			if mockBot.lastMessage != tt.expectedMsg {
+				t.Errorf("expected message %q, got %q", tt.expectedMsg, mockBot.lastMessage)
+			}
+		})
+	}
+}
+
+func TestHandleRemoveBooking(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		chatID         int64
+		expectedMsg    string
+		authenticated  bool
+	}{
+		{
+			name:          "invalid format",
+			input:         "/remove Monday",
+			chatID:        123,
+			expectedMsg:   "Please provide day and hour: /remove <day> <hour> (e.g., /remove Monday 10:00)",
+			authenticated: true,
+		},
+		{
+			name:          "valid removal",
+			input:         "/remove Monday 10:00",
+			chatID:        123,
+			expectedMsg:   "Successfully removed booking for Monday at 10:00!",
+			authenticated: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockBot := &MockBot{}
+			update := tgbotapi.Update{
+				Message: &tgbotapi.Message{
+					Chat: &tgbotapi.Chat{
+						ID: tt.chatID,
+					},
+					Text: tt.input,
+				},
+			}
+
+			if tt.authenticated {
+				userSessions[tt.chatID] = models.UserSession{
+					IsAuthenticated: true,
+					Username:       "testuser",
+					Token:         "testtoken",
+				}
+			}
+
+			HandleRemoveBooking(mockBot, update)
+
+			if mockBot.lastMessage != tt.expectedMsg {
+				t.Errorf("expected message %q, got %q", tt.expectedMsg, mockBot.lastMessage)
 			}
 		})
 	}
@@ -59,15 +136,22 @@ func TestHandleBooking(t *testing.T) {
 func TestFormatScheduleMessage(t *testing.T) {
 	schedule := []models.ClassSchedule{
 		{
-			ID:       "class123",
-			DateTime: "2025-02-04 10:00",
+			Day:       "Monday",
+			Hour:      "10:00",
 			Available: true,
+		},
+		{
+			Day:       "Monday",
+			Hour:      "11:00",
+			Available: false,
+			BookedBy:  "user1",
 		},
 	}
 
-	result := formatScheduleMessage(schedule)
-	expected := "Available Classes:"
+	expected := "Class Schedule:\n\n=== Monday ===\nTime: 10:00 - Available\nTime: 11:00 - Booked by user1\n\n\nTo book a class, use /book <day> <hour>\nTo remove your booking, use /remove <day> <hour>"
 
-	assert.Contains(t, result, expected)
-	assert.Contains(t, result, "class123")
+	result := formatScheduleMessage(schedule)
+	if result != expected {
+		t.Errorf("formatScheduleMessage() returned unexpected format\nexpected: %q\ngot: %q", expected, result)
+	}
 }
