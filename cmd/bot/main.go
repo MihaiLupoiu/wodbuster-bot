@@ -5,9 +5,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/handlers"
 	"github.com/go-co-op/gocron"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"telegram-class-bot/internal/handlers"
 )
 
 func main() {
@@ -32,17 +32,17 @@ func main() {
 	if err != nil {
 		switch err.Error() {
 		case "Not Found", "Unauthorized":
-			slog.Error("Invalid token. Please check your TELEGRAM_BOT_TOKEN is correct", 
+			slog.Error("Invalid token. Please check your TELEGRAM_BOT_TOKEN is correct",
 				"error", err)
 		default:
-			slog.Error("Failed to initialize bot", 
+			slog.Error("Failed to initialize bot",
 				"error", err)
 		}
 		os.Exit(1)
 	}
 
 	bot.Debug = true
-	slog.Info("Bot authorized successfully", 
+	slog.Info("Bot authorized successfully",
 		"username", bot.Self.UserName,
 		"debug_mode", bot.Debug)
 
@@ -104,7 +104,7 @@ func handleUpdate(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
 	}
 
 	if _, err := bot.Send(msg); err != nil {
-		slog.Error("Failed to send message", 
+		slog.Error("Failed to send message",
 			"chat_id", update.Message.Chat.ID,
 			"error", err)
 	}

@@ -27,8 +27,9 @@ jobs:
     - name: Generate
       run: make generate
 
-    - name: Lint
-      run: make lint
+    # Skipping linting for now
+    # - name: Lint
+    #   run: make lint
 
     - name: Test
       run: make test

@@ -2,7 +2,8 @@ package storage
 
 import (
 	"sync"
-	"telegram-class-bot/internal/models"
+
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 )
 
 type MemoryStorage struct {

@@ -4,18 +4,18 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func HandleBooking(bot Bot, update tgbotapi.Update) {
 	args := strings.Split(update.Message.Text, " ")
 	if len(args) != 3 {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 			"Please provide day and hour: /book <day> <hour> (e.g., /book Monday 10:00)")
 		if _, err := bot.Send(msg); err != nil {
-			slog.Error("Failed to send login format message", 
+			slog.Error("Failed to send login format message",
 				"error", err,
 				"chat_id", update.Message.Chat.ID)
 		}
@@ -29,10 +29,10 @@ func HandleBooking(bot Bot, update tgbotapi.Update) {
 	// Validate day
 	validDays := []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
 	if !contains(validDays, day) {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 			"Invalid day. Please use: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, or Sunday")
 		if _, err := bot.Send(msg); err != nil {
-			slog.Error("Failed to send authentication failure message", 
+			slog.Error("Failed to send authentication failure message",
 				"error", err,
 				"chat_id", update.Message.Chat.ID)
 		}
@@ -41,16 +41,16 @@ func HandleBooking(bot Bot, update tgbotapi.Update) {
 
 	// Call your booking API
 	if err := bookClass(day, hour, session.Username, session.Token); err != nil {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 			"Failed to book class. Please try again.")
 		bot.Send(msg)
 		return
 	}
 
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 		fmt.Sprintf("Successfully booked class for %s at %s!", day, hour))
 	if _, err := bot.Send(msg); err != nil {
-		slog.Error("Failed to send login success message", 
+		slog.Error("Failed to send login success message",
 			"error", err,
 			"chat_id", update.Message.Chat.ID)
 	}
@@ -59,7 +59,7 @@ func HandleBooking(bot Bot, update tgbotapi.Update) {
 func HandleRemoveBooking(bot Bot, update tgbotapi.Update) {
 	args := strings.Split(update.Message.Text, " ")
 	if len(args) != 3 {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 			"Please provide day and hour: /remove <day> <hour> (e.g., /remove Monday 10:00)")
 		bot.Send(msg)
 		return
@@ -71,13 +71,13 @@ func HandleRemoveBooking(bot Bot, update tgbotapi.Update) {
 
 	// Call your remove booking API
 	if err := removeBooking(day, hour, session.Username, session.Token); err != nil {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 			"Failed to remove booking. Please try again.")
 		bot.Send(msg)
 		return
 	}
 
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 		fmt.Sprintf("Successfully removed booking for %s at %s!", day, hour))
 	bot.Send(msg)
 }
@@ -95,7 +95,7 @@ func SendAvailableSchedule(bot Bot) {
 	// Implement API call to get available schedule
 	schedule, err := getAvailableClasses()
 	if err != nil {
-		slog.Error("Failed to get class schedule", 
+		slog.Error("Failed to get class schedule",
 			"error", err,
 			"function", "SendAvailableSchedule")
 		return
@@ -113,13 +113,13 @@ func SendAvailableSchedule(bot Bot) {
 func formatScheduleMessage(schedule []models.ClassSchedule) string {
 	var sb strings.Builder
 	sb.WriteString("Class Schedule:\n\n")
-	
+
 	// Group classes by day
 	scheduleByDay := make(map[string][]models.ClassSchedule)
 	for _, class := range schedule {
 		scheduleByDay[class.Day] = append(scheduleByDay[class.Day], class)
 	}
-	
+
 	// Sort days
 	days := []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
 	for _, day := range days {
@@ -135,7 +135,7 @@ func formatScheduleMessage(schedule []models.ClassSchedule) string {
 			sb.WriteString("\n")
 		}
 	}
-	
+
 	sb.WriteString("\nTo book a class, use /book <day> <hour>")
 	sb.WriteString("\nTo remove your booking, use /remove <day> <hour>")
 	return sb.String()

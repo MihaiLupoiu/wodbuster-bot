@@ -3,7 +3,6 @@
 [![CI](https://github.com/MihaiLupoiu/wodbuster-bot/actions/workflows/ci.yaml/badge.svg)](https://github.com/MihaiLupoiu/wodbuster-bot/actions/workflows/ci.yaml)
 
 
-
 A Telegram bot that allows users to book and manage fitness class schedules.
 
 ## Features

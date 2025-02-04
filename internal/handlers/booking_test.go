@@ -2,21 +2,20 @@ package handlers
 
 import (
 	"testing"
-	
+
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"telegram-class-bot/internal/models"
 )
-
 
 func TestHandleBooking(t *testing.T) {
 	tests := []struct {
-		name           string
-		input          string
-		chatID         int64
-		expectedMsg    string
-		authenticated  bool
+		name          string
+		input         string
+		chatID        int64
+		expectedMsg   string
+		authenticated bool
 	}{
 		{
 			name:          "invalid format",
@@ -62,8 +61,8 @@ func TestHandleBooking(t *testing.T) {
 			if tt.authenticated {
 				userSessions[tt.chatID] = models.UserSession{
 					IsAuthenticated: true,
-					Username:       "testuser",
-					Token:         "testtoken",
+					Username:        "testuser",
+					Token:           "testtoken",
 				}
 			}
 
@@ -74,11 +73,11 @@ func TestHandleBooking(t *testing.T) {
 
 func TestHandleRemoveBooking(t *testing.T) {
 	tests := []struct {
-		name           string
-		input          string
-		chatID         int64
-		expectedMsg    string
-		authenticated  bool
+		name          string
+		input         string
+		chatID        int64
+		expectedMsg   string
+		authenticated bool
 	}{
 		{
 			name:          "invalid format",
@@ -117,8 +116,8 @@ func TestHandleRemoveBooking(t *testing.T) {
 			if tt.authenticated {
 				userSessions[tt.chatID] = models.UserSession{
 					IsAuthenticated: true,
-					Username:       "testuser",
-					Token:         "testtoken",
+					Username:        "testuser",
+					Token:           "testtoken",
 				}
 			}
 

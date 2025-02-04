@@ -32,7 +32,7 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 docker-build:
-	docker build -t wodbuster-bot .
+	docker build -t github.com/MihaiLupoiu/wodbuster-bot.
 
 docker-run:
-	docker run -e TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN} wodbuster-bot
+	docker run -e TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN} github.com/MihaiLupoiu/wodbuster-bot
