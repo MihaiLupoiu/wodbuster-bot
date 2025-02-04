@@ -5,7 +5,7 @@ import (
 	"strings"
 	
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"telegram-class-bot/internal/models"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 )
 
 var userSessions = make(map[int64]models.UserSession)
