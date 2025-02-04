@@ -58,12 +58,14 @@ func TestHandleLogin(t *testing.T) {
 // MockBot implements the necessary bot interface for testing
 type MockBot struct {
 	lastMessage string
+	lastChatID  int64
 }
 
 func (m *MockBot) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
 	msg, ok := c.(tgbotapi.MessageConfig)
 	if ok {
 		m.lastMessage = msg.Text
+		m.lastChatID = msg.ChatID
 	}
 	return tgbotapi.Message{}, nil
 }
