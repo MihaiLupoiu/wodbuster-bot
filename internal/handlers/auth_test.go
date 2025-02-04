@@ -4,12 +4,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/mock"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/traefik/mocktail/mocktail"
 )
-
-//go:generate mocktail -r "Bot" -p "handlers"
 func TestHandleLogin(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -45,15 +42,14 @@ func TestHandleLogin(t *testing.T) {
 
 			// Create a mock bot
 			mockBot := NewMockBot(t)
-			mockBot.EXPECT().Send(mocktail.Any[tgbotapi.MessageConfig]()).
-				Return(tgbotapi.Message{}, nil).
-				Run(func(msg tgbotapi.MessageConfig) {
-					if tt.wantErr {
-						assert.Contains(t, msg.Text, tt.expected)
-					} else {
-						assert.Contains(t, msg.Text, tt.expected)
-					}
-				})
+			mockBot.On("Send", mock.MatchedBy(func(msg tgbotapi.MessageConfig) bool {
+				if tt.wantErr {
+					assert.Contains(t, msg.Text, tt.expected)
+				} else {
+					assert.Contains(t, msg.Text, tt.expected)
+				}
+				return true
+			})).Return(tgbotapi.Message{}, nil)
 			
 			HandleLogin(mockBot, update)
 		})

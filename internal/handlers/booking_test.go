@@ -5,7 +5,7 @@ import (
 	
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/stretchr/testify/assert"
-	"github.com/traefik/mocktail/mocktail"
+	"github.com/stretchr/testify/mock"
 	"telegram-class-bot/internal/models"
 )
 
@@ -44,12 +44,11 @@ func TestHandleBooking(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockBot := NewMockBot(t)
-			mockBot.EXPECT().Send(mocktail.Any[tgbotapi.MessageConfig]()).
-				Return(tgbotapi.Message{}, nil).
-				Run(func(msg tgbotapi.MessageConfig) {
-					assert.Equal(t, tt.expectedMsg, msg.Text)
-					assert.Equal(t, tt.chatID, msg.ChatID)
-				})
+			mockBot.On("Send", mock.MatchedBy(func(msg tgbotapi.MessageConfig) bool {
+				assert.Equal(t, tt.expectedMsg, msg.Text)
+				assert.Equal(t, tt.chatID, msg.ChatID)
+				return true
+			})).Return(tgbotapi.Message{}, nil)
 
 			update := tgbotapi.Update{
 				Message: &tgbotapi.Message{
@@ -100,12 +99,11 @@ func TestHandleRemoveBooking(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockBot := NewMockBot(t)
-			mockBot.EXPECT().Send(mocktail.Any[tgbotapi.MessageConfig]()).
-				Return(tgbotapi.Message{}, nil).
-				Run(func(msg tgbotapi.MessageConfig) {
-					assert.Equal(t, tt.expectedMsg, msg.Text)
-					assert.Equal(t, tt.chatID, msg.ChatID)
-				})
+			mockBot.On("Send", mock.MatchedBy(func(msg tgbotapi.MessageConfig) bool {
+				assert.Equal(t, tt.expectedMsg, msg.Text)
+				assert.Equal(t, tt.chatID, msg.ChatID)
+				return true
+			})).Return(tgbotapi.Message{}, nil)
 
 			update := tgbotapi.Update{
 				Message: &tgbotapi.Message{

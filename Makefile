@@ -1,20 +1,23 @@
-.PHONY: build test lint clean
+.PHONY: build test lint clean generate
 
 # Variables
 BINARY_NAME=bot
 MAIN_PATH=./cmd/bot
 BUILD_DIR=build
 
-build: create-build-dir
+generate:
+	go generate ./...
+
+build: generate create-build-dir
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
 
 create-build-dir:
 	mkdir -p $(BUILD_DIR)
 
-test:
+test: generate
 	go test -v ./...
 
-lint:
+lint: generate
 	@if ! command -v golangci-lint &> /dev/null; then \
 		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
 	fi
