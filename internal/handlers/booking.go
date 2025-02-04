@@ -14,7 +14,11 @@ func HandleBooking(bot Bot, update tgbotapi.Update) {
 	if len(args) != 3 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
 			"Please provide day and hour: /book <day> <hour> (e.g., /book Monday 10:00)")
-		bot.Send(msg)
+		if _, err := bot.Send(msg); err != nil {
+			slog.Error("Failed to send login format message", 
+				"error", err,
+				"chat_id", update.Message.Chat.ID)
+		}
 		return
 	}
 
@@ -27,7 +31,11 @@ func HandleBooking(bot Bot, update tgbotapi.Update) {
 	if !contains(validDays, day) {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
 			"Invalid day. Please use: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, or Sunday")
-		bot.Send(msg)
+		if _, err := bot.Send(msg); err != nil {
+			slog.Error("Failed to send authentication failure message", 
+				"error", err,
+				"chat_id", update.Message.Chat.ID)
+		}
 		return
 	}
 
@@ -41,7 +49,11 @@ func HandleBooking(bot Bot, update tgbotapi.Update) {
 
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, 
 		fmt.Sprintf("Successfully booked class for %s at %s!", day, hour))
-	bot.Send(msg)
+	if _, err := bot.Send(msg); err != nil {
+		slog.Error("Failed to send login success message", 
+			"error", err,
+			"chat_id", update.Message.Chat.ID)
+	}
 }
 
 func HandleRemoveBooking(bot Bot, update tgbotapi.Update) {
