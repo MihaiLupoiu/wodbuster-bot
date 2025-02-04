@@ -2,7 +2,10 @@ package handlers
 
 import (
 	"testing"
+	
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/traefik/mocktail/mocktail"
 	"telegram-class-bot/internal/models"
 )
 
@@ -40,7 +43,14 @@ func TestHandleBooking(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockBot := &MockBot{}
+			mockBot := NewMockBot(t)
+			mockBot.EXPECT().Send(mocktail.Any[tgbotapi.MessageConfig]()).
+				Return(tgbotapi.Message{}, nil).
+				Run(func(msg tgbotapi.MessageConfig) {
+					assert.Equal(t, tt.expectedMsg, msg.Text)
+					assert.Equal(t, tt.chatID, msg.ChatID)
+				})
+
 			update := tgbotapi.Update{
 				Message: &tgbotapi.Message{
 					Chat: &tgbotapi.Chat{
@@ -59,10 +69,6 @@ func TestHandleBooking(t *testing.T) {
 			}
 
 			HandleBooking(mockBot, update)
-
-			if mockBot.lastMessage != tt.expectedMsg {
-				t.Errorf("expected message %q, got %q", tt.expectedMsg, mockBot.lastMessage)
-			}
 		})
 	}
 }
@@ -93,7 +99,14 @@ func TestHandleRemoveBooking(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockBot := &MockBot{}
+			mockBot := NewMockBot(t)
+			mockBot.EXPECT().Send(mocktail.Any[tgbotapi.MessageConfig]()).
+				Return(tgbotapi.Message{}, nil).
+				Run(func(msg tgbotapi.MessageConfig) {
+					assert.Equal(t, tt.expectedMsg, msg.Text)
+					assert.Equal(t, tt.chatID, msg.ChatID)
+				})
+
 			update := tgbotapi.Update{
 				Message: &tgbotapi.Message{
 					Chat: &tgbotapi.Chat{
@@ -112,10 +125,6 @@ func TestHandleRemoveBooking(t *testing.T) {
 			}
 
 			HandleRemoveBooking(mockBot, update)
-
-			if mockBot.lastMessage != tt.expectedMsg {
-				t.Errorf("expected message %q, got %q", tt.expectedMsg, mockBot.lastMessage)
-			}
 		})
 	}
 }
