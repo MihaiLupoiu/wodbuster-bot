@@ -3,9 +3,13 @@
 # Variables
 BINARY_NAME=bot
 MAIN_PATH=./cmd/bot
+BUILD_DIR=build
 
-build:
-	go build -o $(BINARY_NAME) $(MAIN_PATH)
+build: create-build-dir
+	go build -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
+
+create-build-dir:
+	mkdir -p $(BUILD_DIR)
 
 test:
 	go test -v ./...
@@ -18,7 +22,7 @@ lint:
 
 clean:
 	go clean
-	rm -f $(BINARY_NAME)
+	rm -rf $(BUILD_DIR)
 
 docker-build:
 	docker build -t telegram-class-bot .
