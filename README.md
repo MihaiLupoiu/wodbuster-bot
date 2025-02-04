@@ -1,4 +1,4 @@
-# Telegram Class Booking Bot
+# WOD Buster Bot
 
 [![CI](https://github.com/MihaiLupoiu/wodbuster-bot/actions/workflows/ci.yaml/badge.svg)](https://github.com/MihaiLupoiu/wodbuster-bot/actions/workflows/ci.yaml)
 

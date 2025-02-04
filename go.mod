@@ -1,4 +1,4 @@
-module telegram-class-bot
+module github.com/MihaiLupoiu/wodbuster-bot
 
 go 1.21
 
