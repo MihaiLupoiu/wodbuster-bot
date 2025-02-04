@@ -11,10 +11,12 @@ import (
 )
 
 type Config struct {
-	TelegramToken string `envconfig:"TELEGRAM_BOT_TOKEN" default:"your_bot_token_here"`
-	Env           string `envconfig:"APP_ENV" default:"prod"`
-	Logger        *slog.Logger
-	LoggerLevel   slog.Level `envconfig:"LOGGING_LEVEL" default:"DEBUG"`
+	TelegramToken      string `envconfig:"TELEGRAM_BOT_TOKEN" default:"your_bot_token_here"`
+	Env                string `envconfig:"APP_ENV" default:"prod"`
+	Logger             *slog.Logger
+	LoggerLevel        slog.Level `envconfig:"LOGGING_LEVEL" default:"DEBUG"`
+	WodbusterUsername  string     `envconfig:"WODBUSTER_USERNAME"`
+	WodbusterPassword  string     `envconfig:"WODBUSTER_PASSWORD"`
 }
 
 func NewConfig(envFile string) (*Config, error) {

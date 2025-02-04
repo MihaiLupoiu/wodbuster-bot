@@ -36,21 +36,31 @@ func (c *Client) Close() {
 }
 
 func (c *Client) Login(username, password string) error {
-	// TODO: Implement login logic using chromedp
-	return nil
+	return chromedp.Run(c.ctx,
+		chromedp.Navigate("https://wodbuster.com/login"),
+		// TODO: Add actual login steps
+	)
 }
 
 func (c *Client) GetAvailableClasses() ([]ClassSchedule, error) {
-	// TODO: Implement schedule scraping logic using chromedp
-	return nil, nil
+	var classes []ClassSchedule
+	err := chromedp.Run(c.ctx,
+		chromedp.Navigate("https://wodbuster.com/schedule"),
+		// TODO: Add actual schedule scraping steps
+	)
+	return classes, err
 }
 
 func (c *Client) BookClass(day, hour string) error {
-	// TODO: Implement booking logic using chromedp
-	return nil
+	return chromedp.Run(c.ctx,
+		chromedp.Navigate("https://wodbuster.com/schedule"),
+		// TODO: Add actual booking steps
+	)
 }
 
 func (c *Client) RemoveBooking(day, hour string) error {
-	// TODO: Implement booking removal logic using chromedp
-	return nil
+	return chromedp.Run(c.ctx,
+		chromedp.Navigate("https://wodbuster.com/schedule"),
+		// TODO: Add actual booking removal steps
+	)
 }
