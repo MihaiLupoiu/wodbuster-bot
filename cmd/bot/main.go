@@ -30,7 +30,14 @@ func main() {
 
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
-		slog.Error("Failed to initialize bot", "error", err)
+		switch err.Error() {
+		case "Not Found", "Unauthorized":
+			slog.Error("Invalid token. Please check your TELEGRAM_BOT_TOKEN is correct", 
+				"error", err)
+		default:
+			slog.Error("Failed to initialize bot", 
+				"error", err)
+		}
 		os.Exit(1)
 	}
 
