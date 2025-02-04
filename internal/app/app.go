@@ -15,8 +15,8 @@ type App struct {
 	config *Config
 }
 
-func Initialize() (*App, error) {
-	config, err := NewConfig()
+func Initialize(envFile string) (*App, error) {
+	config, err := NewConfig(envFile)
 	if err != nil {
 		log.Fatal(err)
 	}

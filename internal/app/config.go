@@ -17,10 +17,10 @@ type Config struct {
 	LoggerLevel   slog.Level `envconfig:"LOGGING_LEVEL" default:"DEBUG"`
 }
 
-func NewConfig() (*Config, error) {
+func NewConfig(envFile string) (*Config, error) {
 	cfg := &Config{}
-	if err := cfg.LoadDotEnv(".env"); err != nil {
-		log.Fatalf("app start failed while reading env: %v", err)
+	if err := cfg.LoadDotEnv(envFile); err != nil {
+		log.Printf("Warning: Failed to load env file: %v", err)
 	}
 	if err := cfg.ParseEnv(); err != nil {
 		log.Fatalf("app start failed while parsing env: %v", err)
