@@ -6,19 +6,6 @@ import (
 	"telegram-class-bot/internal/models"
 )
 
-type MockBot struct {
-	lastMessage string
-	lastChatID  int64
-}
-
-func (m *MockBot) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
-	msg, ok := c.(tgbotapi.MessageConfig)
-	if ok {
-		m.lastMessage = msg.Text
-		m.lastChatID = msg.ChatID
-	}
-	return tgbotapi.Message{}, nil
-}
 
 func TestHandleBooking(t *testing.T) {
 	tests := []struct {
