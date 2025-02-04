@@ -1,48 +1,6 @@
 package app
 
 import (
-	"log/slog"
-	"os"
-)
-
-type Config struct {
-	TelegramToken string
-	Debug         bool
-	Logger        *slog.Logger
-}
-
-func NewConfig() (*Config, error) {
-	token := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if token == "" {
-		return nil, ErrMissingToken
-	}
-
-	if token == "your_bot_token_here" {
-		return nil, ErrInvalidToken
-	}
-
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
-	slog.SetDefault(logger)
-
-	return &Config{
-		TelegramToken: token,
-		Debug:         true,
-		Logger:        logger,
-	}, nil
-}
-package app
-
-import "errors"
-
-var (
-	ErrMissingToken = errors.New("TELEGRAM_BOT_TOKEN environment variable is not set")
-	ErrInvalidToken = errors.New("Please set a valid Telegram bot token")
-)
-package app
-
-import (
 	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/handlers"
