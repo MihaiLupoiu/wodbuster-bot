@@ -1,6 +1,8 @@
 package app
 
 import (
+	"log"
+	"log/slog"
 	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/handlers"
@@ -11,6 +13,20 @@ import (
 type App struct {
 	bot    *tgbotapi.BotAPI
 	config *Config
+}
+
+func Initialize() (*App, error) {
+	config, err := NewConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	application, err := New(config)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return application, nil
 }
 
 func New(config *Config) (*App, error) {
@@ -27,7 +43,9 @@ func New(config *Config) (*App, error) {
 		return nil, err
 	}
 
-	bot.Debug = config.Debug
+	if config.LoggerLevel == slog.LevelDebug {
+		bot.Debug = true
+	}
 	config.Logger.Info("Bot authorized successfully",
 		"username", bot.Self.UserName,
 		"debug_mode", bot.Debug)

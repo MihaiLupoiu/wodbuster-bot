@@ -8,17 +8,12 @@ import (
 )
 
 func main() {
-	config, err := app.NewConfig()
+	app, err := app.Initialize()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	application, err := app.New(config)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if err := application.Execute(); err != nil {
+	if err := app.Execute(); err != nil {
 		os.Exit(1)
 	}
 }

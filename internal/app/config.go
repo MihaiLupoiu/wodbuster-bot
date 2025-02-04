@@ -1,35 +1,57 @@
 package app
 
 import (
-	"errors"
+	"log"
 	"log/slog"
 	"os"
-)
+	"path/filepath"
 
-var (
-	ErrMissingToken = errors.New("TELEGRAM_BOT_TOKEN environment variable is not set")
+	"github.com/joho/godotenv"
+	"github.com/kelseyhightower/envconfig"
 )
 
 type Config struct {
-	TelegramToken string
-	Debug         bool
+	TelegramToken string `envconfig:"TELEGRAM_BOT_TOKEN" default:"your_bot_token_here"`
+	Env           string `envconfig:"APP_ENV" default:"prod"`
 	Logger        *slog.Logger
+	LoggerLevel   slog.Level `envconfig:"LOGGING_LEVEL" default:"DEBUG"`
 }
 
 func NewConfig() (*Config, error) {
-	token := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if token == "" {
-		return nil, ErrMissingToken
+	cfg := &Config{}
+	if err := cfg.LoadDotEnv(".env"); err != nil {
+		log.Fatalf("app start failed while reading env: %v", err)
+	}
+	if err := cfg.ParseEnv(); err != nil {
+		log.Fatalf("app start failed while parsing env: %v", err)
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+	cfg.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: cfg.LoggerLevel,
 	}))
-	slog.SetDefault(logger)
+	slog.SetDefault(cfg.Logger)
 
-	return &Config{
-		TelegramToken: token,
-		Debug:         true,
-		Logger:        logger,
-	}, nil
+	return cfg, nil
+}
+
+// LoadDotEnv read .env file and load vars into env
+func (c *Config) LoadDotEnv(configFile string) error {
+	// do not load .env if we're in production
+	// can not read it from *Config yet
+	if configFile != "" {
+		path, err := filepath.Abs(configFile)
+		if err != nil {
+			return err
+		}
+		slog.Info("Loading .env file", slog.String("file", path))
+		return godotenv.Load(configFile)
+	}
+	slog.Info("Not loading .env file, because it has not been provided")
+	return nil
+}
+
+// ParseEnv takes the global env as source and match the fields on Config
+// from envconfig json tag
+func (c *Config) ParseEnv() error {
+	return envconfig.Process("", c)
 }
