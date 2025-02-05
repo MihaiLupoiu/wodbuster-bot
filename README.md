@@ -2,16 +2,15 @@
 
 [![CI](https://github.com/MihaiLupoiu/wodbuster-bot/actions/workflows/ci.yaml/badge.svg)](https://github.com/MihaiLupoiu/wodbuster-bot/actions/workflows/ci.yaml)
 
-
-A Telegram bot that allows users to book and manage fitness class schedules.
+A Telegram bot that automates the booking process for WODBuster fitness classes.
 
 ## Features
 
-- User authentication
+- User authentication via WODBuster credentials
 - Class booking by day and time
 - Booking cancellation
 - Weekly schedule viewing
-- Automated weekly schedule notifications
+- Automated weekly schedule notifications (every Sunday at 00:00 UTC)
 
 ## Flow
 
@@ -29,42 +28,42 @@ A Telegram bot that allows users to book and manage fitness class schedules.
 sequenceDiagram
     participant User
     participant Bot
-    participant AuthHandler
-    participant BookingHandler
-    participant API
+    participant WODBuster
+    participant Storage
 
     User->>Bot: /start
     Bot->>User: Welcome message
 
     User->>Bot: /login username password
-    Bot->>AuthHandler: Handle login
-    AuthHandler->>API: Authenticate
-    API->>AuthHandler: Token
-    AuthHandler->>User: Login success/failure
+    Bot->>WODBuster: Authenticate
+    WODBuster->>Bot: Session token
+    Bot->>Storage: Store session
+    Bot->>User: Login success/failure
 
     User->>Bot: /book Monday 10:00
-    Bot->>BookingHandler: Handle booking
-    BookingHandler->>AuthHandler: Check authentication
-    AuthHandler->>BookingHandler: Is authenticated
-    BookingHandler->>API: Book class
-    API->>BookingHandler: Booking confirmation
-    BookingHandler->>User: Booking success/failure
+    Bot->>Storage: Check authentication
+    Storage->>Bot: Is authenticated
+    Bot->>WODBuster: Book class
+    WODBuster->>Bot: Booking confirmation
+    Bot->>User: Booking success/failure
 
     User->>Bot: /remove Monday 10:00
-    Bot->>BookingHandler: Handle removal
-    BookingHandler->>AuthHandler: Check authentication
-    AuthHandler->>BookingHandler: Is authenticated
-    BookingHandler->>API: Cancel booking
-    API->>BookingHandler: Cancellation confirmation
-    BookingHandler->>User: Removal success/failure
+    Bot->>Storage: Check authentication
+    Storage->>Bot: Is authenticated
+    Bot->>WODBuster: Cancel booking
+    WODBuster->>Bot: Cancellation confirmation
+    Bot->>User: Removal success/failure
 ```
 
 ## Setup
 
 1. Get a Telegram Bot Token from BotFather
-2. Set the environment variable:
-   ```bash
-   export TELEGRAM_BOT_TOKEN=your_token_here
+2. Create a `.env.dev` file with:
+   ```
+   TELEGRAM_BOT_TOKEN=your_token_here
+   APP_ENV=dev
+   LOGGING_LEVEL=DEBUG
+   WODBUSTER_URL=https://wodbuster.com
    ```
 3. Build and run:
    ```bash
@@ -76,7 +75,6 @@ sequenceDiagram
 
 - Run tests: `make test`
 - Run linter: `make lint`
-- Generate mocks: `make generate`
 - Build: `make build`
 - Clean: `make clean`
 
@@ -85,13 +83,17 @@ sequenceDiagram
 ```
 .
 ├── cmd/
-│   └── bot/              # Main application
+│   └── bot/              # Main application entry point
 ├── internal/
-│   ├── handlers/         # Command handlers
-│   ├── models/           # Data models
-│   └── storage/          # Data storage
-├── Dockerfile           # Container definition
-├── go.mod              # Go modules file
-├── go.sum              # Go modules checksums
-└── Makefile            # Build commands
+│   ├── app/             # Application core logic
+│   ├── handlers/        # Command handlers
+│   ├── models/          # Data models
+│   ├── storage/         # Session storage
+│   ├── telegram/        # Telegram bot implementation
+│   └── wodbuster/       # WODBuster client
+├── .env.dev            # Development environment variables
+├── Dockerfile          # Container definition
+├── go.mod             # Go modules file
+├── go.sum             # Go modules checksums
+└── Makefile           # Build commands
 ```
