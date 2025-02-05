@@ -8,7 +8,6 @@ import (
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/wodbuster"
 	"github.com/go-co-op/gocron"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type App struct {
