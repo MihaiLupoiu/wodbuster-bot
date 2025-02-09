@@ -80,7 +80,7 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 
 	switch update.Message.Command() {
 	case "start":
-		b.sendMessage(update.Message.Chat.ID, 
+		b.sendMessage(update.Message.Chat.ID,
 			"Welcome! Please use /login to authenticate first.")
 	case "login":
 		b.loginHandler.Handle(update)
@@ -89,14 +89,14 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 	case "remove":
 		b.removeHandler.Handle(update)
 	case "help":
-		b.sendMessage(update.Message.Chat.ID, 
+		b.sendMessage(update.Message.Chat.ID,
 			"Available commands:\n"+
-			"/login username password - Login to the system\n"+
-			"/book day hour - Book a class (e.g., /book Monday 10:00)\n"+
-			"/remove day hour - Remove your booking (e.g., /remove Monday 10:00)\n"+
-			"/help - Show this help message")
+				"/login username password - Login to the system\n"+
+				"/book day hour - Book a class (e.g., /book Monday 10:00)\n"+
+				"/remove day hour - Remove your booking (e.g., /remove Monday 10:00)\n"+
+				"/help - Show this help message")
 	default:
-		b.sendMessage(update.Message.Chat.ID, 
+		b.sendMessage(update.Message.Chat.ID,
 			"I don't know that command. Use /help to see available commands")
 	}
 }
