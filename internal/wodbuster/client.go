@@ -11,32 +11,62 @@ import (
 )
 
 type Client struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	logger *slog.Logger
+	ctx     context.Context
+	cancel  context.CancelFunc
+	logger  *slog.Logger
 	baseURL string
 }
 
-func NewClient(logger *slog.Logger, baseURL string) (*Client, error) {
+// Option defines the method to customize the Client.
+type Option func(*Client)
+
+// WithContext allows setting a custom context for the client.
+func WithContext(ctx context.Context) Option {
+	return func(c *Client) {
+		if ctx != nil {
+			if c.cancel != nil {
+				c.cancel()
+			}
+			var cancel context.CancelFunc
+			c.ctx, cancel = chromedp.NewContext(ctx)
+			// Set a timeout for the entire browser context
+			c.ctx, cancel = context.WithTimeout(c.ctx, 30*time.Second)
+			c.cancel = cancel
+		}
+	}
+}
+
+// WithLogger allows setting a custom logger for the client.
+func WithLogger(logger *slog.Logger) Option {
+	return func(c *Client) {
+		if logger != nil {
+			c.logger = logger
+		}
+	}
+}
+
+func NewClient(baseURL string, opts ...Option) (*Client, error) {
 	if baseURL == "" {
 		return nil, ErrMissingBaseURL
 	}
 
-	// Create a new chrome instance
-	ctx, cancel := chromedp.NewContext(
-		context.Background(),
-		// chromedp.WithDebugf(log.Printf), // Uncomment for debug logs
-	)
-
-	// Set a timeout for the entire browser context
+	// Create default client with background context
+	ctx, cancel := chromedp.NewContext(context.Background())
 	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
-
-	return &Client{
+	
+	client := &Client{
 		ctx:     ctx,
 		cancel:  cancel,
-		logger:  logger,
 		baseURL: baseURL,
-	}, nil
+		logger:  slog.Default(),
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(client)
+	}
+
+	return client, nil
 }
 
 func (c *Client) Close() {

@@ -30,7 +30,8 @@ func Initialize(envFile string) (*App, error) {
 }
 
 func New(config *Config) (*App, error) {
-	wodClient, err := wodbuster.NewClient(config.Logger, config.WodbusterURL)
+	wodClient, err := wodbuster.NewClient(config.WodbusterURL, 
+		wodbuster.WithLogger(config.Logger))
 	if err != nil {
 		config.Logger.Error("Failed to initialize wodbuster client",
 			"error", err)
