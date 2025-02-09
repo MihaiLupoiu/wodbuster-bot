@@ -9,3 +9,7 @@ type WodbusterClient interface {
 type Logger interface {
     Error(msg string, args ...interface{})
 }
+
+type BotAPI interface {
+    Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
+}

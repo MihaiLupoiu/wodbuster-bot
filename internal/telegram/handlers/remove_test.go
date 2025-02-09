@@ -3,7 +3,6 @@ package handlers
 import (
     "testing"
     "github.com/stretchr/testify/mock"
-    "github.com/stretchr/testify/assert"
     tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
     "github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/session"
 )

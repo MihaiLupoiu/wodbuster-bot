@@ -7,7 +7,7 @@ import (
 )
 
 type BookingHandler struct {
-    api       *tgbotapi.BotAPI
+    api       BotAPI
     wodbuster WodbusterClient
     logger    Logger
     sessions  *session.Manager

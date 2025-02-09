@@ -17,6 +17,8 @@ func (m *MockBotAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
     return args.Get(0).(tgbotapi.Message), args.Error(1)
 }
 
+var _ BotAPI = (*MockBotAPI)(nil) // Verify MockBotAPI implements BotAPI
+
 type MockWodbuster struct {
     mock.Mock
 }
