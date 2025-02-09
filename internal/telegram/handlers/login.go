@@ -13,7 +13,7 @@ type LoginHandler struct {
     sessions  *session.Manager
 }
 
-func NewLoginHandler(api *tgbotapi.BotAPI, wodbuster WodbusterClient, logger Logger, sessions *session.Manager) *LoginHandler {
+func NewLoginHandler(api BotAPI, wodbuster WodbusterClient, logger Logger, sessions *session.Manager) *LoginHandler {
     return &LoginHandler{
         api:       api,
         wodbuster: wodbuster,

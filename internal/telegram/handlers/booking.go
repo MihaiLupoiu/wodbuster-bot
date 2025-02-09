@@ -13,7 +13,7 @@ type BookingHandler struct {
     sessions  *session.Manager
 }
 
-func NewBookingHandler(api *tgbotapi.BotAPI, wodbuster WodbusterClient, logger Logger, sessions *session.Manager) *BookingHandler {
+func NewBookingHandler(api BotAPI, wodbuster WodbusterClient, logger Logger, sessions *session.Manager) *BookingHandler {
     return &BookingHandler{
         api:       api,
         wodbuster: wodbuster,

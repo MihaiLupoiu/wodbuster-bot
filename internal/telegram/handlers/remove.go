@@ -13,7 +13,7 @@ type RemoveHandler struct {
     sessions  *session.Manager
 }
 
-func NewRemoveHandler(api *tgbotapi.BotAPI, wodbuster WodbusterClient, logger Logger, sessions *session.Manager) *RemoveHandler {
+func NewRemoveHandler(api BotAPI, wodbuster WodbusterClient, logger Logger, sessions *session.Manager) *RemoveHandler {
     return &RemoveHandler{
         api:       api,
         wodbuster: wodbuster,
