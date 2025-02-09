@@ -11,5 +11,5 @@ type Logger interface {
 }
 
 type BotAPI interface {
-    Send(c interface{}) (interface{}, error)
+    Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
 }
