@@ -3,14 +3,19 @@ package telegram
 import (
 	"log/slog"
 
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/handlers"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/session"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/wodbuster"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type Bot struct {
-	api       *tgbotapi.BotAPI
-	wodbuster *wodbuster.Client
-	logger    *slog.Logger
+	api            *tgbotapi.BotAPI
+	logger         *slog.Logger
+	sessionManager *session.Manager
+	loginHandler   *handlers.LoginHandler
+	bookHandler    *handlers.BookingHandler
+	removeHandler  *handlers.RemoveHandler
 }
 
 type Config struct {
@@ -39,10 +44,15 @@ func New(cfg Config) (*Bot, error) {
 		"username", api.Self.UserName,
 		"debug_mode", api.Debug)
 
+	sessionManager := session.NewManager()
+
 	return &Bot{
-		api:       api,
-		wodbuster: cfg.Wodbuster,
-		logger:    cfg.Logger,
+		api:            api,
+		logger:         cfg.Logger,
+		sessionManager: sessionManager,
+		loginHandler:   handlers.NewLoginHandler(api, cfg.Wodbuster, cfg.Logger, sessionManager),
+		bookHandler:    handlers.NewBookingHandler(api, cfg.Wodbuster, cfg.Logger, sessionManager),
+		removeHandler:  handlers.NewRemoveHandler(api, cfg.Wodbuster, cfg.Logger, sessionManager),
 	}, nil
 }
 
@@ -64,41 +74,37 @@ func (b *Bot) Start() error {
 }
 
 func (b *Bot) handleUpdate(update tgbotapi.Update) {
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "")
+	if update.Message == nil {
+		return
+	}
 
 	switch update.Message.Command() {
 	case "start":
-		msg.Text = "Welcome! Please use /login to authenticate first."
+		b.sendMessage(update.Message.Chat.ID, 
+			"Welcome! Please use /login to authenticate first.")
 	case "login":
-		b.handleLogin(update)
-		return
+		b.loginHandler.Handle(update)
 	case "book":
-		if !b.isAuthenticated(update.Message.Chat.ID) {
-			msg.Text = "Please login first using /login"
-		} else {
-			b.handleBooking(update)
-			return
-		}
+		b.bookHandler.Handle(update)
 	case "remove":
-		if !b.isAuthenticated(update.Message.Chat.ID) {
-			msg.Text = "Please login first using /login"
-		} else {
-			b.handleRemoveBooking(update)
-			return
-		}
+		b.removeHandler.Handle(update)
 	case "help":
-		msg.Text = "Available commands:\n" +
-			"/login username password - Login to the system\n" +
-			"/book day hour - Book a class (e.g., /book Monday 10:00)\n" +
-			"/remove day hour - Remove your booking (e.g., /remove Monday 10:00)\n" +
-			"/help - Show this help message"
+		b.sendMessage(update.Message.Chat.ID, 
+			"Available commands:\n"+
+			"/login username password - Login to the system\n"+
+			"/book day hour - Book a class (e.g., /book Monday 10:00)\n"+
+			"/remove day hour - Remove your booking (e.g., /remove Monday 10:00)\n"+
+			"/help - Show this help message")
 	default:
-		msg.Text = "I don't know that command. Use /help to see available commands"
+		b.sendMessage(update.Message.Chat.ID, 
+			"I don't know that command. Use /help to see available commands")
 	}
-
+}
+func (b *Bot) sendMessage(chatID int64, text string) {
+	msg := tgbotapi.NewMessage(chatID, text)
 	if _, err := b.api.Send(msg); err != nil {
 		b.logger.Error("Failed to send message",
-			"chat_id", update.Message.Chat.ID,
-			"error", err)
+			"error", err,
+			"chat_id", chatID)
 	}
 }

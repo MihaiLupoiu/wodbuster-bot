@@ -3,7 +3,7 @@ package handlers
 import (
     "strings"
     tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-    "your-module/internal/telegram/session"
+    "github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/session"
 )
 
 type LoginHandler struct {

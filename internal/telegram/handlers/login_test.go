@@ -5,7 +5,7 @@ import (
     "github.com/stretchr/testify/mock"
     "github.com/stretchr/testify/assert"
     tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-    "your-module/internal/telegram/session"
+    "github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/session"
 )
 
 type MockBotAPI struct {
