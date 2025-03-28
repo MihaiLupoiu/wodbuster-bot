@@ -37,7 +37,11 @@ func New(config *Config) (*App, error) {
 	// Initialize storage based on configuration
 	switch config.StorageType {
 	case "mongodb":
-		store, err = storage.NewMongoStorage(config.MongoURI, config.MongoDB)
+		store, err = storage.NewMongoStorage(
+			config.MongoURI,
+			config.MongoDB,
+			storage.WithTimeout(10*time.Second),
+		)
 		if err != nil {
 			config.Logger.Error("Failed to initialize MongoDB storage",
 				"error", err)

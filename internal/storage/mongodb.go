@@ -18,28 +18,54 @@ type MongoStorage struct {
 	ctxTimeout time.Duration
 }
 
-func NewMongoStorage(uri, database string) (*MongoStorage, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+type MongoOption func(*MongoStorage)
 
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
-	if err != nil {
-		return nil, err
+func WithClient(client *mongo.Client) MongoOption {
+	return func(m *MongoStorage) {
+		m.client = client
 	}
+}
 
-	// Ping the database to verify connection
-	if err := client.Ping(ctx, nil); err != nil {
-		return nil, err
+func WithTimeout(timeout time.Duration) MongoOption {
+	return func(m *MongoStorage) {
+		m.ctxTimeout = timeout
 	}
+}
 
-	db := client.Database(database)
-	return &MongoStorage{
-		client:     client,
+func NewMongoStorage(uri, database string, opts ...MongoOption) (*MongoStorage, error) {
+	s := &MongoStorage{
 		database:   database,
-		sessions:   db.Collection("sessions"),
-		classes:    db.Collection("classes"),
 		ctxTimeout: 5 * time.Second,
-	}, nil
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	// If no client provided, create one
+	if s.client == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+		if err != nil {
+			return nil, err
+		}
+
+		// Ping the database to verify connection
+		if err := client.Ping(ctx, nil); err != nil {
+			return nil, err
+		}
+
+		s.client = client
+	}
+
+	db := s.client.Database(s.database)
+	s.sessions = db.Collection("sessions")
+	s.classes = db.Collection("classes")
+
+	return s, nil
 }
 
 func (s *MongoStorage) Close() error {

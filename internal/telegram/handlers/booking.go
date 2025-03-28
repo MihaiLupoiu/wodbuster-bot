@@ -38,13 +38,17 @@ func (h *BookingHandler) Handle(update tgbotapi.Update) {
 		return
 	}
 
-	user := ""
-	password := ""
+	session, exists := h.sessions.GetSession(update.Message.Chat.ID)
+	if !exists {
+		h.sendMessage(update.Message.Chat.ID, "Session error. Please login again using /login command")
+		return
+	}
+
 	caser := cases.Title(language.English)
 	day := caser.String(strings.ToLower(args[1]))
 	hour := args[2]
 
-	if err := h.wodbuster.BookClass(user, password, day, hour); err != nil {
+	if err := h.wodbuster.BookClass(session.Username, session.Password, day, hour); err != nil {
 		h.sendMessage(update.Message.Chat.ID,
 			"Failed to book class. Please try again later.")
 		return

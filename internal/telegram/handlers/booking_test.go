@@ -15,6 +15,11 @@ func (m *MockWodbuster) BookClass(username, password, day, hour string) error {
 }
 
 func TestBookingHandler_Handle(t *testing.T) {
+	const (
+		testUsername = "testuser"
+		testPassword = "password"
+	)
+
 	tests := []struct {
 		name       string
 		input      string
@@ -26,7 +31,7 @@ func TestBookingHandler_Handle(t *testing.T) {
 			input:  "/book Monday 10:00",
 			isAuth: true,
 			setupMocks: func(api *MockBotAPI, wod *MockWodbuster) {
-				wod.On("BookClass", "Monday", "10:00").Return(nil)
+				wod.On("BookClass", testUsername, testPassword, "Monday", "10:00").Return(nil)
 				api.On("Send", mock.Anything).Return(tgbotapi.Message{}, nil)
 			},
 		},
@@ -57,7 +62,7 @@ func TestBookingHandler_Handle(t *testing.T) {
 			sessions := session.NewManager(mockStorage)
 
 			if tt.isAuth {
-				sessions.SetAuthenticated(123, true, "testuser", "password")
+				sessions.SetAuthenticated(123, true, testUsername, testPassword)
 			}
 
 			handler := NewBookingHandler(api, wod, logger, sessions)

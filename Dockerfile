@@ -1,27 +1,16 @@
-# Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 WORKDIR /app
 
-# Copy go mod and sum files
 COPY go.mod go.sum ./
-
-# Download dependencies
 RUN go mod download
 
-# Copy source code
 COPY . .
+RUN go build -o /app/bot ./cmd/bot
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o bot ./cmd/bot
-
-# Final stage
 FROM alpine:latest
 
 WORKDIR /app
-
-# Copy the binary from builder
 COPY --from=builder /app/bot .
 
-# Run the binary
 CMD ["./bot"]
