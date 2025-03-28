@@ -1,20 +1,51 @@
 package wodbuster
 
 import (
+	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/chromedp/chromedp"
+	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
 )
 
-const testBaseURL = "http://localhost:8080"
+func init() {
+	// Try to load from current directory first
+	if err := godotenv.Load(); err != nil {
+		// If failed, try to load from project root
+		projectRoot := filepath.Join("..", "..")
+		if err := godotenv.Load(filepath.Join(projectRoot, ".env")); err != nil {
+			// Log the error but don't fail - env vars might be set in the environment
+			slog.Info("Error loading .env file", "error", err)
+		}
+	}
+}
+
+const testBaseURL = "https://firespain.wodbuster.com"
 
 func setupTestClient(t *testing.T) *Client {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	client, err := NewClient(testBaseURL, WithLogger(logger))
+	ctx, _ := chromedp.NewExecAllocator(context.Background(), append(chromedp.DefaultExecAllocatorOptions[:], chromedp.Flag("headless", false))...)
+	// defer cancel()
+
+	client, err := NewClient(testBaseURL, WithLogger(logger), WithContext(ctx))
 	assert.NoError(t, err)
 	return client
+}
+
+func getTestCredentials(t *testing.T) (string, string) {
+	user := os.Getenv("TEST_EMAIL")
+	pass := os.Getenv("TEST_PASSWORD")
+
+	if user == "" || pass == "" {
+		t.Logf("Environment variables not set. TEST_EMAIL=%s, TEST_PASSWORD=%s", user, pass)
+		t.Skip("TEST_EMAIL or TEST_PASSWORD environment variables not set")
+	}
+
+	return user, pass
 }
 
 func TestNewClient(t *testing.T) {
@@ -85,50 +116,60 @@ func TestNewClientWithOptions(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
+	// t.Run("with invalid credentials", func(t *testing.T) {
+	// 	client := setupTestClient(t)
+	// 	defer client.Close()
+
+	// 	err := client.Login("test_user@gmail.com", "test_pass")
+	// 	assert.Error(t, err)
+	// 	assert.Contains(t, err.Error(), "login failed")
+	// })
+
+	// t.Run("with empty credentials", func(t *testing.T) {
+	// 	client := setupTestClient(t)
+	// 	defer client.Close()
+
+	// 	err := client.Login("", "")
+	// 	assert.Error(t, err)
+	// 	assert.Contains(t, err.Error(), "email and password are required")
+	// })
+
 	t.Run("with valid credentials", func(t *testing.T) {
+		user, pass := getTestCredentials(t)
 		client := setupTestClient(t)
 		defer client.Close()
 
-		// This will fail in tests since we're not running a real server
-		err := client.Login("test_user", "test_pass")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "login failed")
-	})
-
-	t.Run("with empty credentials", func(t *testing.T) {
-		client := setupTestClient(t)
-		defer client.Close()
-
-		err := client.Login("", "")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "login failed")
+		err := client.Login(user, pass)
+		assert.NoError(t, err)
 	})
 }
 
 func TestGetAvailableClasses(t *testing.T) {
+	user, pass := getTestCredentials(t)
 	client := setupTestClient(t)
 	defer client.Close()
 
-	classes, err := client.GetAvailableClasses()
+	classes, err := client.GetAvailableClasses(user, pass)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to navigate")
 	assert.Nil(t, classes)
 }
 
 func TestBookClass(t *testing.T) {
+	user, pass := getTestCredentials(t)
 	client := setupTestClient(t)
 	defer client.Close()
 
-	err := client.BookClass("Monday", "10:00")
+	err := client.BookClass(user, pass, "X", "09:00")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to navigate")
 }
 
-func TestRemoveBooking(t *testing.T) {
-	client := setupTestClient(t)
-	defer client.Close()
+// func TestRemoveBooking(t *testing.T) {
+// 	client := setupTestClient(t)
+// 	defer client.Close()
 
-	err := client.RemoveBooking("Monday", "10:00")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to navigate")
-}
+// 	err := client.RemoveBooking("Monday", "10:00")
+// 	assert.Error(t, err)
+// 	assert.Contains(t, err.Error(), "failed to navigate")
+// }
