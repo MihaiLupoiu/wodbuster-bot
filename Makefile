@@ -6,8 +6,14 @@ MAIN_PATH=./cmd/bot
 BUILD_DIR=build
 
 tools: ## Install the tools needed for the project
-	go install github.com/vektra/mockery/v2@latest
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@if ! command -v mockery &> /dev/null; then \
+		echo "Installing mockery..." && \
+		go install github.com/vektra/mockery/v2@latest; \
+	fi
+	@if ! command -v golangci-lint &> /dev/null; then \
+		echo "Installing golangci-lint..." && \
+		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
+	fi
 
 generate: tools ## Generate all the mocks and the code for the bot
 	go generate ./...
@@ -24,10 +30,7 @@ create-build-dir: ## Create the build directory
 test: tools generate ## Run the tests
 	go test -v ./...
 
-lint: tools generate ## Lint the code
-	@if ! command -v golangci-lint &> /dev/null; then \
-		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
-	fi
+lint: tools ## Lint the code
 	golangci-lint run
 
 clean: ## Clean the build directory
@@ -41,9 +44,17 @@ docker-run: ## Run the bot in a docker container
 	docker run -e TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN} github.com/MihaiLupoiu/wodbuster-bot
 
 docker-compose-run: ## Run the bot and MongoDB using docker-compose
+	@if ! command -v docker-compose &> /dev/null; then \
+		echo "Error: docker-compose is not installed. Please install Docker Compose first."; \
+		exit 1; \
+	fi
 	docker-compose up --build
 
 docker-compose-down: ## Stop and remove docker-compose containers
+	@if ! command -v docker-compose &> /dev/null; then \
+		echo "Error: docker-compose is not installed. Please install Docker Compose first."; \
+		exit 1; \
+	fi
 	docker-compose down -v
 
 # Help documentation à la https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
