@@ -20,10 +20,12 @@ func (m *Manager) IsAuthenticated(chatID int64) bool {
 	return exists && session.IsAuthenticated
 }
 
-func (m *Manager) SetAuthenticated(chatID int64, status bool) {
+func (m *Manager) SetAuthenticated(chatID int64, status bool, username, password string) {
 	session := models.UserSession{
 		ChatID:          chatID,
 		IsAuthenticated: status,
+		Username:        username,
+		Password:        password,
 	}
 	m.storage.SaveSession(chatID, session)
 }

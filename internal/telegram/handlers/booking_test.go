@@ -57,7 +57,7 @@ func TestBookingHandler_Handle(t *testing.T) {
 			sessions := session.NewManager(mockStorage)
 
 			if tt.isAuth {
-				sessions.SetAuthenticated(123, true)
+				sessions.SetAuthenticated(123, true, "testuser", "password")
 			}
 
 			handler := NewBookingHandler(api, wod, logger, sessions)

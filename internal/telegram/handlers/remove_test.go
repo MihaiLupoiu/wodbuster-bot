@@ -57,7 +57,7 @@ func TestRemoveHandler_Handle(t *testing.T) {
 			sessions := session.NewManager(mockStorage)
 
 			if tt.isAuth {
-				sessions.SetAuthenticated(123, true)
+				sessions.SetAuthenticated(123, true, "testuser", "password")
 			}
 
 			handler := NewRemoveHandler(api, wod, logger, sessions)

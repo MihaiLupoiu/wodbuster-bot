@@ -4,6 +4,7 @@ type UserSession struct {
 	ChatID          int64
 	IsAuthenticated bool
 	Username        string
+	Password        string
 	Token           string
 }
 
