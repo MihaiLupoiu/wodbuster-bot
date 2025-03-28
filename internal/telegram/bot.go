@@ -3,6 +3,7 @@ package telegram
 import (
 	"log/slog"
 
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/handlers"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/session"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/wodbuster"
@@ -23,6 +24,7 @@ type Config struct {
 	Debug     bool
 	Logger    *slog.Logger
 	Wodbuster *wodbuster.Client
+	Storage   storage.Storage
 }
 
 func New(cfg Config) (*Bot, error) {
@@ -44,7 +46,7 @@ func New(cfg Config) (*Bot, error) {
 		"username", api.Self.UserName,
 		"debug_mode", api.Debug)
 
-	sessionManager := session.NewManager()
+	sessionManager := session.NewManager(cfg.Storage)
 
 	return &Bot{
 		api:            api,
@@ -100,6 +102,7 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 			"I don't know that command. Use /help to see available commands")
 	}
 }
+
 func (b *Bot) sendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	if _, err := b.api.Send(msg); err != nil {

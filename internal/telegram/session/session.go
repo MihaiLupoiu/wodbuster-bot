@@ -1,27 +1,29 @@
 package session
 
-import "sync"
+import (
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage"
+)
 
 type Manager struct {
-    sessions map[int64]bool
-    mu       sync.RWMutex
+	storage storage.Storage
 }
 
-func NewManager() *Manager {
-    return &Manager{
-        sessions: make(map[int64]bool),
-    }
+func NewManager(store storage.Storage) *Manager {
+	return &Manager{
+		storage: store,
+	}
 }
 
 func (m *Manager) IsAuthenticated(chatID int64) bool {
-    m.mu.RLock()
-    defer m.mu.RUnlock()
-    authenticated, exists := m.sessions[chatID]
-    return exists && authenticated
+	session, exists := m.storage.GetSession(chatID)
+	return exists && session.IsAuthenticated
 }
 
 func (m *Manager) SetAuthenticated(chatID int64, status bool) {
-    m.mu.Lock()
-    defer m.mu.Unlock()
-    m.sessions[chatID] = status
+	session := models.UserSession{
+		ChatID:          chatID,
+		IsAuthenticated: status,
+	}
+	m.storage.SaveSession(chatID, session)
 }

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/wodbuster"
 	"github.com/go-co-op/gocron"
@@ -30,7 +31,23 @@ func Initialize(envFile string) (*App, error) {
 }
 
 func New(config *Config) (*App, error) {
-	wodClient, err := wodbuster.NewClient(config.WodbusterURL, 
+	var store storage.Storage
+	var err error
+
+	// Initialize storage based on configuration
+	switch config.StorageType {
+	case "mongodb":
+		store, err = storage.NewMongoStorage(config.MongoURI, config.MongoDB)
+		if err != nil {
+			config.Logger.Error("Failed to initialize MongoDB storage",
+				"error", err)
+			return nil, err
+		}
+	default:
+		store = storage.NewMemoryStorage()
+	}
+
+	wodClient, err := wodbuster.NewClient(config.WodbusterURL,
 		wodbuster.WithLogger(config.Logger))
 	if err != nil {
 		config.Logger.Error("Failed to initialize wodbuster client",
@@ -43,6 +60,7 @@ func New(config *Config) (*App, error) {
 		Debug:     config.LoggerLevel == slog.LevelDebug,
 		Logger:    config.Logger,
 		Wodbuster: wodClient,
+		Storage:   store,
 	})
 	if err != nil {
 		return nil, err

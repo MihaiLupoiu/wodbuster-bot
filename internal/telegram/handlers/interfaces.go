@@ -4,7 +4,7 @@ import tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 type WodbusterClient interface {
 	Login(username, password string) error
-	BookClass(day, hour string) error
+	BookClass(username, password, day, hour string) error
 	RemoveBooking(day, hour string) error
 }
 
