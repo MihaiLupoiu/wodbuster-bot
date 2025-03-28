@@ -35,10 +35,16 @@ clean: ## Clean the build directory
 	rm -rf $(BUILD_DIR)
 
 docker-build: ## Build the bot in a docker container
-	docker build -t github.com/MihaiLupoiu/wodbuster-bot.
+	docker build -t github.com/MihaiLupoiu/wodbuster-bot .
 
 docker-run: ## Run the bot in a docker container
 	docker run -e TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN} github.com/MihaiLupoiu/wodbuster-bot
+
+docker-compose-run: ## Run the bot and MongoDB using docker-compose
+	docker-compose up --build
+
+docker-compose-down: ## Stop and remove docker-compose containers
+	docker-compose down -v
 
 # Help documentation à la https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
 help: ## Display this help message
