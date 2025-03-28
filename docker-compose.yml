@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - STORAGE_TYPE=mongodb
+      - MONGO_URI=mongodb://mongodb:27017
+      - MONGO_DB=wodbuster
+      - APP_ENV=prod
+      - LOGGING_LEVEL=DEBUG
+      - WODBUSTER_URL=https://wodbuster.com
+    depends_on:
+      - mongodb
+    networks:
+      - bot-network
+
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - bot-network
+
+volumes:
+  mongodb_data:
+
+networks:
+  bot-network:
+    driver: bridge
