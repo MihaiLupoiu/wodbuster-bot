@@ -12,12 +12,14 @@ import (
 
 func TestMongoStorage_Sessions(t *testing.T) {
 	ctx := context.Background()
-	client, err := functionaltest.CreateMongoContainer(ctx, t)
+	dbName := "test_sessions"
+	client, uri, err := functionaltest.CreateMongoContainer(ctx, t, dbName)
 	require.NoError(t, err)
 
 	t.Run("SaveAndGetSession", func(t *testing.T) {
 		// Given
-		storage, err := NewMongoStorage("", "test", WithClient(client))
+		var err error
+		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
 		require.NoError(t, err)
 
 		session := models.UserSession{
@@ -38,7 +40,8 @@ func TestMongoStorage_Sessions(t *testing.T) {
 
 	t.Run("GetNonExistentSession", func(t *testing.T) {
 		// Given
-		storage, err := NewMongoStorage("", "test", WithClient(client))
+		var err error
+		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
 		require.NoError(t, err)
 
 		// When
@@ -51,12 +54,14 @@ func TestMongoStorage_Sessions(t *testing.T) {
 
 func TestMongoStorage_Classes(t *testing.T) {
 	ctx := context.Background()
-	client, err := functionaltest.CreateMongoContainer(ctx, t)
+	dbName := "test_classes"
+	client, uri, err := functionaltest.CreateMongoContainer(ctx, t, dbName)
 	require.NoError(t, err)
 
 	t.Run("SaveAndGetClass", func(t *testing.T) {
 		// Given
-		storage, err := NewMongoStorage("", "test", WithClient(client))
+		var err error
+		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
 		require.NoError(t, err)
 
 		class := models.ClassSchedule{
@@ -78,7 +83,8 @@ func TestMongoStorage_Classes(t *testing.T) {
 
 	t.Run("GetNonExistentClass", func(t *testing.T) {
 		// Given
-		storage, err := NewMongoStorage("", "test", WithClient(client))
+		var err error
+		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
 		require.NoError(t, err)
 
 		// When
@@ -90,7 +96,8 @@ func TestMongoStorage_Classes(t *testing.T) {
 
 	t.Run("GetAllClasses", func(t *testing.T) {
 		// Given
-		storage, err := NewMongoStorage("", "test", WithClient(client))
+		var err error
+		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
 		require.NoError(t, err)
 
 		class1 := models.ClassSchedule{

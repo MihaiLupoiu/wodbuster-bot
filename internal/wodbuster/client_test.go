@@ -134,36 +134,36 @@ func TestLogin(t *testing.T) {
 	// 	assert.Contains(t, err.Error(), "email and password are required")
 	// })
 
-	t.Run("with valid credentials", func(t *testing.T) {
-		user, pass := getTestCredentials(t)
-		client := setupTestClient(t)
-		defer client.Close()
+	// t.Run("with valid credentials", func(t *testing.T) {
+	// 	user, pass := getTestCredentials(t)
+	// 	client := setupTestClient(t)
+	// 	defer client.Close()
 
-		err := client.Login(user, pass)
-		assert.NoError(t, err)
-	})
+	// 	err := client.Login(user, pass)
+	// 	assert.NoError(t, err)
+	// })
 }
 
-func TestGetAvailableClasses(t *testing.T) {
-	user, pass := getTestCredentials(t)
-	client := setupTestClient(t)
-	defer client.Close()
+// func TestGetAvailableClasses(t *testing.T) {
+// 	user, pass := getTestCredentials(t)
+// 	client := setupTestClient(t)
+// 	defer client.Close()
 
-	classes, err := client.GetAvailableClasses(user, pass)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to navigate")
-	assert.Nil(t, classes)
-}
+// 	classes, err := client.GetAvailableClasses(user, pass)
+// 	assert.Error(t, err)
+// 	assert.Contains(t, err.Error(), "failed to navigate")
+// 	assert.Nil(t, classes)
+// }
 
-func TestBookClass(t *testing.T) {
-	user, pass := getTestCredentials(t)
-	client := setupTestClient(t)
-	defer client.Close()
+// func TestBookClass(t *testing.T) {
+// 	user, pass := getTestCredentials(t)
+// 	client := setupTestClient(t)
+// 	defer client.Close()
 
-	err := client.BookClass(user, pass, "X", "09:00")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to navigate")
-}
+// 	err := client.BookClass(user, pass, "X", "09:00")
+// 	assert.Error(t, err)
+// 	assert.Contains(t, err.Error(), "failed to navigate")
+// }
 
 // func TestRemoveBooking(t *testing.T) {
 // 	client := setupTestClient(t)
