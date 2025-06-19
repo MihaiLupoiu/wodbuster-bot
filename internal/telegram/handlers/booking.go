@@ -42,7 +42,7 @@ func (h *BookingHandler) Handle(update tgbotapi.Update) {
 	}
 
 	args := strings.Split(update.Message.Text, " ")
-	if len(args) != 3 {
+	if len(args) != 4 {
 		h.sendMessage(update.Message.Chat.ID,
 			"Please provide day and hour: /book <day> <hour> <class-type> (e.g., /book Monday 10:00 wod)")
 		return

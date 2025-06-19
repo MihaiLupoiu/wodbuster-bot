@@ -73,10 +73,26 @@ sequenceDiagram
 
 ## Development
 
+### Build Commands
 - Run tests: `make test`
 - Run linter: `make lint`
 - Build: `make build`
 - Clean: `make clean`
+
+### Testing
+The project uses [mockery](https://github.com/vektra/mockery) to generate mocks for interfaces. Mocks are located in:
+- `internal/telegram/handlers/mocks.go` - Mocks for handlers
+- `internal/telegram/usecase/mocks.go` - Mocks for use cases
+
+To regenerate mocks after interface changes:
+```bash
+go tool mockery
+```
+
+Test files follow these conventions:
+- Use generated mocks from mockery instead of manual mocks
+- Test files are located next to the code they test
+- Follow table-driven test patterns
 
 ## Project Structure
 
