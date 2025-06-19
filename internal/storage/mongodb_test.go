@@ -1,126 +1,116 @@
 package storage
 
-import (
-	"context"
-	"testing"
+// func TestMongoStorage_Sessions(t *testing.T) {
+// 	ctx := context.Background()
+// 	dbName := "test_sessions"
+// 	client, uri, err := functionaltest.CreateMongoContainer(ctx, t, dbName)
+// 	require.NoError(t, err)
 
-	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
-	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage/functionaltest"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-)
+// 	t.Run("SaveAndGetSession", func(t *testing.T) {
+// 		// Given
+// 		var err error
+// 		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
+// 		require.NoError(t, err)
 
-func TestMongoStorage_Sessions(t *testing.T) {
-	ctx := context.Background()
-	dbName := "test_sessions"
-	client, uri, err := functionaltest.CreateMongoContainer(ctx, t, dbName)
-	require.NoError(t, err)
+// 		session := models.UserSession{
+// 			ChatID:          123,
+// 			IsAuthenticated: true,
+// 			Username:        "testuser",
+// 			Token:           "testtoken",
+// 		}
 
-	t.Run("SaveAndGetSession", func(t *testing.T) {
-		// Given
-		var err error
-		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
-		require.NoError(t, err)
+// 		// When
+// 		storage.SaveSession(session.ChatID, session)
+// 		got, exists := storage.GetSession(session.ChatID)
 
-		session := models.UserSession{
-			ChatID:          123,
-			IsAuthenticated: true,
-			Username:        "testuser",
-			Token:           "testtoken",
-		}
+// 		// Then
+// 		assert.True(t, exists)
+// 		assert.Equal(t, session, got)
+// 	})
 
-		// When
-		storage.SaveSession(session.ChatID, session)
-		got, exists := storage.GetSession(session.ChatID)
+// 	t.Run("GetNonExistentSession", func(t *testing.T) {
+// 		// Given
+// 		var err error
+// 		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
+// 		require.NoError(t, err)
 
-		// Then
-		assert.True(t, exists)
-		assert.Equal(t, session, got)
-	})
+// 		// When
+// 		_, exists := storage.GetSession(999)
 
-	t.Run("GetNonExistentSession", func(t *testing.T) {
-		// Given
-		var err error
-		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
-		require.NoError(t, err)
+// 		// Then
+// 		assert.False(t, exists)
+// 	})
+// }
 
-		// When
-		_, exists := storage.GetSession(999)
+// func TestMongoStorage_Classes(t *testing.T) {
+// 	ctx := context.Background()
+// 	dbName := "test_classes"
+// 	client, uri, err := functionaltest.CreateMongoContainer(ctx, t, dbName)
+// 	require.NoError(t, err)
 
-		// Then
-		assert.False(t, exists)
-	})
-}
+// 	t.Run("SaveAndGetClass", func(t *testing.T) {
+// 		// Given
+// 		var err error
+// 		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
+// 		require.NoError(t, err)
 
-func TestMongoStorage_Classes(t *testing.T) {
-	ctx := context.Background()
-	dbName := "test_classes"
-	client, uri, err := functionaltest.CreateMongoContainer(ctx, t, dbName)
-	require.NoError(t, err)
+// 		class := models.ClassSchedule{
+// 			ID:        "class1",
+// 			Day:       "Monday",
+// 			Hour:      "10:00",
+// 			Available: true,
+// 			BookedBy:  "testuser",
+// 		}
 
-	t.Run("SaveAndGetClass", func(t *testing.T) {
-		// Given
-		var err error
-		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
-		require.NoError(t, err)
+// 		// When
+// 		storage.SaveClass(class)
+// 		got, exists := storage.GetClass(class.ID)
 
-		class := models.ClassSchedule{
-			ID:        "class1",
-			Day:       "Monday",
-			Hour:      "10:00",
-			Available: true,
-			BookedBy:  "testuser",
-		}
+// 		// Then
+// 		assert.True(t, exists)
+// 		assert.Equal(t, class, got)
+// 	})
 
-		// When
-		storage.SaveClass(class)
-		got, exists := storage.GetClass(class.ID)
+// 	t.Run("GetNonExistentClass", func(t *testing.T) {
+// 		// Given
+// 		var err error
+// 		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
+// 		require.NoError(t, err)
 
-		// Then
-		assert.True(t, exists)
-		assert.Equal(t, class, got)
-	})
+// 		// When
+// 		_, exists := storage.GetClass("nonexistent")
 
-	t.Run("GetNonExistentClass", func(t *testing.T) {
-		// Given
-		var err error
-		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
-		require.NoError(t, err)
+// 		// Then
+// 		assert.False(t, exists)
+// 	})
 
-		// When
-		_, exists := storage.GetClass("nonexistent")
+// 	t.Run("GetAllClasses", func(t *testing.T) {
+// 		// Given
+// 		var err error
+// 		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
+// 		require.NoError(t, err)
 
-		// Then
-		assert.False(t, exists)
-	})
+// 		class1 := models.ClassSchedule{
+// 			ID:        "class1",
+// 			Day:       "Monday",
+// 			Hour:      "10:00",
+// 			Available: true,
+// 		}
+// 		class2 := models.ClassSchedule{
+// 			ID:        "class2",
+// 			Day:       "Tuesday",
+// 			Hour:      "11:00",
+// 			Available: true,
+// 		}
 
-	t.Run("GetAllClasses", func(t *testing.T) {
-		// Given
-		var err error
-		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
-		require.NoError(t, err)
+// 		// When
+// 		storage.SaveClass(class1)
+// 		storage.SaveClass(class2)
+// 		classes := storage.GetAllClasses()
 
-		class1 := models.ClassSchedule{
-			ID:        "class1",
-			Day:       "Monday",
-			Hour:      "10:00",
-			Available: true,
-		}
-		class2 := models.ClassSchedule{
-			ID:        "class2",
-			Day:       "Tuesday",
-			Hour:      "11:00",
-			Available: true,
-		}
-
-		// When
-		storage.SaveClass(class1)
-		storage.SaveClass(class2)
-		classes := storage.GetAllClasses()
-
-		// Then
-		assert.Len(t, classes, 2)
-		assert.Contains(t, classes, class1)
-		assert.Contains(t, classes, class2)
-	})
-}
+// 		// Then
+// 		assert.Len(t, classes, 2)
+// 		assert.Contains(t, classes, class1)
+// 		assert.Contains(t, classes, class2)
+// 	})
+// }

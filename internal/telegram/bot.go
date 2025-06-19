@@ -3,28 +3,26 @@ package telegram
 import (
 	"log/slog"
 
-	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/handlers"
-	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/session"
-	"github.com/MihaiLupoiu/wodbuster-bot/internal/wodbuster"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/usecase"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type Bot struct {
-	api            *tgbotapi.BotAPI
-	logger         *slog.Logger
-	sessionManager *session.Manager
-	loginHandler   *handlers.LoginHandler
-	bookHandler    *handlers.BookingHandler
-	removeHandler  *handlers.RemoveHandler
+	api           *tgbotapi.BotAPI
+	logger        *slog.Logger
+	manager       *usecase.Manager
+	loginHandler  *handlers.LoginHandler
+	bookHandler   *handlers.BookingHandler
+	removeHandler *handlers.RemoveHandler
 }
 
 type Config struct {
 	Token     string
 	Debug     bool
 	Logger    *slog.Logger
-	Wodbuster *wodbuster.Client
-	Storage   storage.Storage
+	APIClient usecase.APIClient
+	Storage   usecase.Storage
 }
 
 func New(cfg Config) (*Bot, error) {
@@ -46,15 +44,15 @@ func New(cfg Config) (*Bot, error) {
 		"username", api.Self.UserName,
 		"debug_mode", api.Debug)
 
-	sessionManager := session.NewManager(cfg.Storage)
+	manager := usecase.NewManager(cfg.Storage, cfg.APIClient)
 
 	return &Bot{
-		api:            api,
-		logger:         cfg.Logger,
-		sessionManager: sessionManager,
-		loginHandler:   handlers.NewLoginHandler(api, cfg.Wodbuster, cfg.Logger, sessionManager),
-		bookHandler:    handlers.NewBookingHandler(api, cfg.Wodbuster, cfg.Logger, sessionManager),
-		removeHandler:  handlers.NewRemoveHandler(api, cfg.Wodbuster, cfg.Logger, sessionManager),
+		api:          api,
+		logger:       cfg.Logger,
+		manager:      manager,
+		loginHandler: handlers.NewLoginHandler(api, cfg.Logger, manager),
+		bookHandler:  handlers.NewBookingHandler(api, cfg.Logger, manager),
+		// removeHandler: handlers.NewRemoveHandler(api, cfg.Wodbuster, cfg.Logger, manager),
 	}, nil
 }
 

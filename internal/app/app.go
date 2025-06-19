@@ -7,6 +7,7 @@ import (
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/usecase"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/wodbuster"
 	"github.com/go-co-op/gocron"
 )
@@ -31,7 +32,7 @@ func Initialize(envFile string) (*App, error) {
 }
 
 func New(config *Config) (*App, error) {
-	var store storage.Storage
+	var store usecase.Storage
 	var err error
 
 	// Initialize storage based on configuration
@@ -40,7 +41,6 @@ func New(config *Config) (*App, error) {
 		store, err = storage.NewMongoStorage(
 			config.MongoURI,
 			config.MongoDB,
-			storage.WithTimeout(10*time.Second),
 		)
 		if err != nil {
 			config.Logger.Error("Failed to initialize MongoDB storage",
@@ -63,7 +63,7 @@ func New(config *Config) (*App, error) {
 		Token:     config.TelegramToken,
 		Debug:     config.LoggerLevel == slog.LevelDebug,
 		Logger:    config.Logger,
-		Wodbuster: wodClient,
+		APIClient: wodClient,
 		Storage:   store,
 	})
 	if err != nil {

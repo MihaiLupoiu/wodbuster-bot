@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
@@ -11,11 +12,9 @@ import (
 )
 
 type MongoStorage struct {
-	client     *mongo.Client
-	database   string
-	sessions   *mongo.Collection
-	classes    *mongo.Collection
-	ctxTimeout time.Duration
+	client   *mongo.Client
+	database string
+	users    *mongo.Collection
 }
 
 type MongoOption func(*MongoStorage)
@@ -26,16 +25,9 @@ func WithClient(client *mongo.Client) MongoOption {
 	}
 }
 
-func WithTimeout(timeout time.Duration) MongoOption {
-	return func(m *MongoStorage) {
-		m.ctxTimeout = timeout
-	}
-}
-
 func NewMongoStorage(uri, database string, opts ...MongoOption) (*MongoStorage, error) {
 	s := &MongoStorage{
-		database:   database,
-		ctxTimeout: 5 * time.Second,
+		database: database,
 	}
 
 	// Apply options
@@ -62,42 +54,33 @@ func NewMongoStorage(uri, database string, opts ...MongoOption) (*MongoStorage, 
 	}
 
 	db := s.client.Database(s.database)
-	s.sessions = db.Collection("sessions")
-	s.classes = db.Collection("classes")
+	s.users = db.Collection("users")
 
 	return s, nil
 }
 
-func (s *MongoStorage) Close() error {
-	ctx, cancel := context.WithTimeout(context.Background(), s.ctxTimeout)
-	defer cancel()
+func (s *MongoStorage) Close(ctx context.Context) error {
 	return s.client.Disconnect(ctx)
 }
 
-func (s *MongoStorage) SaveSession(chatID int64, session models.UserSession) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.ctxTimeout)
-	defer cancel()
-
-	filter := bson.M{"chatID": chatID}
-	update := bson.M{"$set": session}
+func (s *MongoStorage) SaveUser(ctx context.Context, user models.User) error {
+	filter := bson.M{"chatID": user.ChatID}
+	update := bson.M{"$set": user}
 	opts := options.Update().SetUpsert(true)
 
-	_, err := s.sessions.UpdateOne(ctx, filter, update, opts)
+	_, err := s.users.UpdateOne(ctx, filter, update, opts)
 	if err != nil {
-		// In a production environment, you might want to handle this error more gracefully
-		panic(err)
+		return fmt.Errorf("error saving user %v: %w", user, err)
 	}
+	return nil
 }
 
-func (s *MongoStorage) GetSession(chatID int64) (models.UserSession, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.ctxTimeout)
-	defer cancel()
-
-	var session models.UserSession
-	err := s.sessions.FindOne(ctx, bson.M{"chatID": chatID}).Decode(&session)
+func (s *MongoStorage) GetUser(ctx context.Context, chatID int64) (models.User, bool) {
+	var session models.User
+	err := s.users.FindOne(ctx, bson.M{"chatID": chatID}).Decode(&session)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return models.UserSession{}, false
+			return models.User{}, false
 		}
 		panic(err)
 	}
@@ -105,50 +88,21 @@ func (s *MongoStorage) GetSession(chatID int64) (models.UserSession, bool) {
 	return session, true
 }
 
-func (s *MongoStorage) SaveClass(class models.ClassSchedule) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.ctxTimeout)
-	defer cancel()
-
-	filter := bson.M{"_id": class.ID}
-	update := bson.M{"$set": class}
-	opts := options.Update().SetUpsert(true)
-
-	_, err := s.classes.UpdateOne(ctx, filter, update, opts)
-	if err != nil {
-		panic(err)
+func (s *MongoStorage) SaveClassBookingSchedule(ctx context.Context, chatID int64, class models.ClassBookingSchedule) error {
+	user, exists := s.GetUser(ctx, chatID)
+	if !exists {
+		return fmt.Errorf("user with chatID %d does not exist", chatID)
 	}
+	user.ClassBookingSchedules = append(user.ClassBookingSchedules, class)
+
+	return s.SaveUser(ctx, user)
 }
 
-func (s *MongoStorage) GetClass(classID string) (models.ClassSchedule, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.ctxTimeout)
-	defer cancel()
-
-	var class models.ClassSchedule
-	err := s.classes.FindOne(ctx, bson.M{"_id": classID}).Decode(&class)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return models.ClassSchedule{}, false
-		}
-		panic(err)
+func (s *MongoStorage) GetClassBookingSchedules(ctx context.Context, chatID int64) ([]models.ClassBookingSchedule, bool) {
+	user, exists := s.GetUser(ctx, chatID)
+	if !exists {
+		return nil, false
 	}
 
-	return class, true
-}
-
-func (s *MongoStorage) GetAllClasses() []models.ClassSchedule {
-	ctx, cancel := context.WithTimeout(context.Background(), s.ctxTimeout)
-	defer cancel()
-
-	cursor, err := s.classes.Find(ctx, bson.M{})
-	if err != nil {
-		panic(err)
-	}
-	defer cursor.Close(ctx)
-
-	var classes []models.ClassSchedule
-	if err := cursor.All(ctx, &classes); err != nil {
-		panic(err)
-	}
-
-	return classes
+	return user.ClassBookingSchedules, true
 }

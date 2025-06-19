@@ -15,7 +15,7 @@ A Telegram bot that automates the booking process for WODBuster fitness classes.
 ## Flow
 
 1. User starts the bot with `/start`
-2. User authenticates using `/login username password`
+2. User authenticates using `/login email password`
 3. Once authenticated, user can:
    - View available classes (sent automatically every Sunday)
    - Book a class using `/book day hour`

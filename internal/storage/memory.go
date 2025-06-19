@@ -1,56 +1,53 @@
 package storage
 
 import (
+	"context"
 	"sync"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 )
 
 type MemoryStorage struct {
-	sessions map[int64]models.UserSession
-	classes  map[string]models.ClassSchedule
-	mu       sync.RWMutex
+	users map[int64]models.User
+	mu    sync.RWMutex
 }
 
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
-		sessions: make(map[int64]models.UserSession),
-		classes:  make(map[string]models.ClassSchedule),
+		users: make(map[int64]models.User),
 	}
 }
 
-func (s *MemoryStorage) SaveSession(chatID int64, session models.UserSession) {
+func (s *MemoryStorage) SaveUser(_ context.Context, user models.User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sessions[chatID] = session
+	s.users[user.ChatID] = user
+	return nil
 }
 
-func (s *MemoryStorage) GetSession(chatID int64) (models.UserSession, bool) {
+func (s *MemoryStorage) GetUser(_ context.Context, chatID int64) (models.User, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	session, exists := s.sessions[chatID]
-	return session, exists
+	user, exists := s.users[chatID]
+	return user, exists
 }
 
-func (s *MemoryStorage) SaveClass(class models.ClassSchedule) {
+func (s *MemoryStorage) SaveClassBookingSchedule(_ context.Context, chatID int64, class models.ClassBookingSchedule) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.classes[class.ID] = class
-}
-
-func (s *MemoryStorage) GetClass(classID string) (models.ClassSchedule, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	class, exists := s.classes[classID]
-	return class, exists
-}
-
-func (s *MemoryStorage) GetAllClasses() []models.ClassSchedule {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	classes := make([]models.ClassSchedule, 0, len(s.classes))
-	for _, class := range s.classes {
-		classes = append(classes, class)
+	s.users[chatID] = models.User{
+		ChatID:                chatID,
+		ClassBookingSchedules: append(s.users[chatID].ClassBookingSchedules, class),
 	}
-	return classes
+	return nil
+}
+
+func (s *MemoryStorage) GetClassBookingSchedules(_ context.Context, chatID int64) ([]models.ClassBookingSchedule, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	user, exists := s.users[chatID]
+	if !exists {
+		return nil, false
+	}
+	return user.ClassBookingSchedules, true
 }
