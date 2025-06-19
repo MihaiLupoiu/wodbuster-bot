@@ -77,16 +77,16 @@ var (
 	ErrNotImplemented = errors.New("method not implemented")
 )
 
-func (c *Client) Login(email, password string) error {
+func (c *Client) LogIn(_ context.Context, email, password string) (string, error) {
 	if email == "" || password == "" {
-		return fmt.Errorf("email and password are required")
+		return "", fmt.Errorf("email and password are required")
 	}
 
 	// First navigate to the page using the main context
 	if err := chromedp.Run(c.ctx,
 		chromedp.Navigate("https://wodbuster.com"),
 	); err != nil {
-		return fmt.Errorf("failed to navigate to login page: %w", err)
+		return "", fmt.Errorf("failed to navigate to login page: %w", err)
 	}
 
 	// Create new context after navigation
@@ -99,13 +99,13 @@ func (c *Client) Login(email, password string) error {
 	actions = append(actions, rememberBrowser()...)
 
 	if err := chromedp.Run(ctx, actions...); err != nil {
-		return fmt.Errorf("login failed: %w", err)
+		return "", fmt.Errorf("login failed: %w", err)
 	}
 
 	c.logger.Info("Successfully logged in",
 		"username", email,
 		"url", c.baseURL)
-	return nil
+	return "", nil
 }
 
 func login(baseURL, email, password string) []chromedp.Action {
@@ -191,7 +191,7 @@ func acceptConfirmation() []chromedp.Action {
 	}
 }
 
-func (c *Client) BookClass(email, password string, day, hour string) error {
+func (c *Client) BookClass(_ context.Context, email, password string, day, hour string) error {
 	if day == "" || hour == "" {
 		return fmt.Errorf("day and hour are required")
 	}
