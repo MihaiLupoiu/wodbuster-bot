@@ -51,3 +51,12 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 	}
 	m.storage.SaveUser(ctx, user)
 }
+
+func (m *Manager) ScheduleBookClass(ctx context.Context, chatID int64, class models.ClassBookingSchedule) error {
+	err := m.storage.SaveClassBookingSchedule(ctx, chatID, class)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

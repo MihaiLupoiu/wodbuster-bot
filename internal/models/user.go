@@ -10,7 +10,8 @@ type User struct {
 }
 
 type ClassBookingSchedule struct {
-	ID   string `json:"id" bson:"id"`     // Unique identifier for the class booking
-	Day  string `json:"day" bson:"day"`   // e.g., "Monday", "Tuesday"
-	Hour string `json:"hour" bson:"hour"` // e.g., "10:00"
+	ID        string `json:"id" bson:"id"`                 // Unique identifier for the class booking
+	ClassType string `json:"class_type" bson:"class_type"` // e.g., "WOD", "Open"
+	Day       string `json:"day" bson:"day"`               // e.g., "Monday", "Tuesday"
+	Hour      string `json:"hour" bson:"hour"`             // e.g., "10:00"
 }

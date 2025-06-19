@@ -9,12 +9,12 @@ import (
 )
 
 type Bot struct {
-	api           *tgbotapi.BotAPI
-	logger        *slog.Logger
-	manager       *usecase.Manager
-	loginHandler  *handlers.LoginHandler
-	bookHandler   *handlers.BookingHandler
-	removeHandler *handlers.RemoveHandler
+	api          *tgbotapi.BotAPI
+	logger       *slog.Logger
+	manager      *usecase.Manager
+	loginHandler *handlers.LoginHandler
+	bookHandler  *handlers.BookingHandler
+	// removeHandler *handlers.RemoveHandler
 }
 
 type Config struct {
@@ -41,7 +41,7 @@ func New(cfg Config) (*Bot, error) {
 
 	api.Debug = cfg.Debug
 	cfg.Logger.Info("Bot authorized successfully",
-		"username", api.Self.UserName,
+		"user", api.Self.UserName,
 		"debug_mode", api.Debug)
 
 	manager := usecase.NewManager(cfg.Storage, cfg.APIClient)
@@ -50,8 +50,8 @@ func New(cfg Config) (*Bot, error) {
 		api:          api,
 		logger:       cfg.Logger,
 		manager:      manager,
-		loginHandler: handlers.NewLoginHandler(api, cfg.Logger, manager),
-		bookHandler:  handlers.NewBookingHandler(api, cfg.Logger, manager),
+		loginHandler: handlers.NewLoginHandler(api, manager),
+		bookHandler:  handlers.NewBookingHandler(api, manager),
 		// removeHandler: handlers.NewRemoveHandler(api, cfg.Wodbuster, cfg.Logger, manager),
 	}, nil
 }
@@ -86,14 +86,14 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 		b.loginHandler.Handle(update)
 	case "book":
 		b.bookHandler.Handle(update)
-	case "remove":
-		b.removeHandler.Handle(update)
+	// case "remove":
+	// 	b.removeHandler.Handle(update)
 	case "help":
 		b.sendMessage(update.Message.Chat.ID,
 			"Available commands:\n"+
-				"/login username password - Login to the system\n"+
-				"/book day hour - Book a class (e.g., /book Monday 10:00)\n"+
-				"/remove day hour - Remove your booking (e.g., /remove Monday 10:00)\n"+
+				"/login email password - Login to the system\n"+
+				"/book day hour class-type - Book a class (e.g., /book Monday 10:00 wod)\n"+
+				"/remove day hour class-type - Remove your booking (e.g., /remove Monday 10:00 wod)\n"+
 				"/help - Show this help message")
 	default:
 		b.sendMessage(update.Message.Chat.ID,
