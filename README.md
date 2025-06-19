@@ -113,3 +113,19 @@ Test files follow these conventions:
 ├── go.sum             # Go modules checksums
 └── Makefile           # Build commands
 ```
+
+## TODO:
+
+### Basic Functionality
+- [ ] Basic WoodBuster client implementation that is able to authenticate and book classes
+- [ ] Have Manager to use the WoodBuster client to logIn and Book classes by storing the session cookie
+- [ ] Implement the cron to execute the weekly schedule and book classes
+- [ ] Implement Notifications for the weekly schedule booking if successful or failed
+- [ ] Deploy the bot to a server
+- [ ] Automatically deploy update of the code using GitHub Actions
+  
+### Advanced Functionality
+- [ ] Implement a way to cancel bookings
+- [ ] Implement a way to view the booked classes
+- [ ] Improve Class Type options to be more user-friendly
+- [ ] Use the API and not the chromedp to book classes
