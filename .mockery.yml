@@ -1,0 +1,19 @@
+all: false
+dir: '{{.InterfaceDir}}'
+filename: mocks.go
+force-file-write: true
+formatter: goimports
+log-level: error
+structname: '{{.Mock}}{{.InterfaceName}}'
+pkgname: '{{.SrcPackageName}}'
+recursive: true
+require-template-schema-exists: true
+template: testify
+template-schema: '{{.Template}}.schema.json'
+packages:
+  github.com/MihaiLupoiu/wodbuster-bot/internal/:
+    config:
+      all: false
+      # include all by default
+      include-interface-regex: '(.+)'
+      exclude-interface-regex: '(.+)Metrics'
