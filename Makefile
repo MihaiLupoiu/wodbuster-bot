@@ -1,37 +1,29 @@
-.PHONY: build test lint clean generate tools
+.PHONY: build test lint clean generate
 
 # Variables
 BINARY_NAME=bot
 MAIN_PATH=./cmd/bot
 BUILD_DIR=build
 
-tools: ## Install the tools needed for the project
-	@if ! command -v mockery &> /dev/null; then \
-		echo "Installing mockery..." && \
-		go install github.com/vektra/mockery/v2@latest; \
-	fi
-	@if ! command -v golangci-lint &> /dev/null; then \
-		echo "Installing golangci-lint..." && \
-		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
-	fi
 
-generate: tools ## Generate all the mocks and the code for the bot
+generate: ## Generate all the mocks and the code for the bot
 	go generate ./...
+	go tool mockery
 
-build: tools generate create-build-dir ## Build the bot
+build: generate create-build-dir ## Build the bot
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
 
-run: tools generate ## Run the bot
+run: generate ## Run the bot
 	go run $(MAIN_PATH) -env=.env
 
 create-build-dir: ## Create the build directory
 	mkdir -p $(BUILD_DIR)
 
-test: tools generate ## Run the tests
+test: generate ## Run the tests
 	go test -v ./...
 
-lint: tools ## Lint the code
-	golangci-lint run
+lint: ## Lint the code
+	go tool golangci-lint run ./...
 
 clean: ## Clean the build directory
 	go clean
