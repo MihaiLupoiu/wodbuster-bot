@@ -2,15 +2,26 @@
 
 [![CI](https://github.com/MihaiLupoiu/wodbuster-bot/actions/workflows/ci.yaml/badge.svg)](https://github.com/MihaiLupoiu/wodbuster-bot/actions/workflows/ci.yaml)
 
-A Telegram bot that automates the booking process for WODBuster fitness classes.
+A Telegram bot that automates the booking process for WODBuster fitness classes with enterprise-grade security and reliability features.
 
 ## Features
 
-- User authentication via WODBuster credentials
-- Class booking by day and time
+- User authentication via WODBuster credentials with encrypted password storage
+- Class booking by day and time with comprehensive input validation
 - Booking cancellation
 - Weekly schedule viewing
 - Automated weekly schedule notifications (every Sunday at 00:00 UTC)
+- Rate limiting to prevent abuse
+- Health check endpoints for monitoring
+- Graceful shutdown handling
+- Comprehensive logging and error handling
+
+## Security Features
+
+- **Password Encryption**: All passwords are encrypted using AES-GCM before storage
+- **Input Validation**: Comprehensive validation for all user inputs (email, time, day, class type)
+- **Rate Limiting**: Token bucket algorithm prevents command spam
+- **Input Sanitization**: All inputs are sanitized to prevent injection attacks
 
 ## Flow
 
@@ -18,8 +29,8 @@ A Telegram bot that automates the booking process for WODBuster fitness classes.
 2. User authenticates using `/login email password`
 3. Once authenticated, user can:
    - View available classes (sent automatically every Sunday)
-   - Book a class using `/book day hour`
-   - Cancel a booking using `/remove day hour`
+   - Book a class using `/book day hour class-type`
+   - Cancel a booking using `/remove day hour class-type`
    - View commands with `/help`
 
 ## Architecture
@@ -28,47 +39,60 @@ A Telegram bot that automates the booking process for WODBuster fitness classes.
 sequenceDiagram
     participant User
     participant Bot
-    participant WODBuster
+    participant RateLimiter
+    participant Validator
+    participant Manager
     participant Storage
+    participant WODBuster
+    participant HealthCheck
 
     User->>Bot: /start
+    Bot->>RateLimiter: Check rate limit
+    RateLimiter-->>Bot: Allow/Deny
     Bot->>User: Welcome message
 
     User->>Bot: /login username password
-    Bot->>WODBuster: Authenticate
-    WODBuster->>Bot: Session token
-    Bot->>Storage: Store session
+    Bot->>RateLimiter: Check rate limit
+    Bot->>Validator: Validate email & password
+    Validator-->>Bot: Valid/Invalid
+    Bot->>Manager: LogInAndSave (encrypted)
+    Manager->>Storage: Store encrypted credentials
     Bot->>User: Login success/failure
 
-    User->>Bot: /book Monday 10:00
-    Bot->>Storage: Check authentication
-    Storage->>Bot: Is authenticated
-    Bot->>WODBuster: Book class
-    WODBuster->>Bot: Booking confirmation
+    User->>Bot: /book Monday 10:00 wod
+    Bot->>RateLimiter: Check rate limit
+    Bot->>Validator: Validate day, hour, class type
+    Bot->>Manager: Check authentication
+    Manager->>Storage: Get user data
+    Storage-->>Manager: User exists
+    Bot->>Manager: ScheduleBookClass
+    Manager->>Storage: Save booking schedule
     Bot->>User: Booking success/failure
 
-    User->>Bot: /remove Monday 10:00
-    Bot->>Storage: Check authentication
-    Storage->>Bot: Is authenticated
-    Bot->>WODBuster: Cancel booking
-    WODBuster->>Bot: Cancellation confirmation
-    Bot->>User: Removal success/failure
+    HealthCheck->>Storage: Check connectivity
+    HealthCheck->>HealthCheck: System health check
 ```
 
 ## Setup
 
 1. Get a Telegram Bot Token from BotFather
 2. Create a `.env.dev` file with:
-   ```
+   ```env
    TELEGRAM_BOT_TOKEN=your_token_here
    APP_ENV=dev
    LOGGING_LEVEL=DEBUG
    WODBUSTER_URL=https://wodbuster.com
+   ENCRYPTION_KEY=your-32-character-secret-key123
+   HEALTH_CHECK_PORT=8080
+   APP_VERSION=1.0.0
+   STORAGE_TYPE=memory
+   MONGO_URI=mongodb://localhost:27017
+   MONGO_DB=wodbuster
    ```
 3. Build and run:
    ```bash
    make build
-   ./build/bot
+   ./build/bot -env=.env.dev
    ```
 
 ## Development
@@ -78,21 +102,27 @@ sequenceDiagram
 - Run linter: `make lint`
 - Build: `make build`
 - Clean: `make clean`
+- Generate mocks: `make generate`
 
 ### Testing
-The project uses [mockery](https://github.com/vektra/mockery) to generate mocks for interfaces. Mocks are located in:
-- `internal/telegram/handlers/mocks.go` - Mocks for handlers
-- `internal/telegram/usecase/mocks.go` - Mocks for use cases
+The project uses comprehensive testing with:
+- Unit tests for all utilities (validation, crypto, rate limiting)
+- Integration testing with testcontainers
+- Mocked dependencies using mockery
+- Table-driven tests following Go best practices
 
-To regenerate mocks after interface changes:
-```bash
-go tool mockery
-```
+### Health Checks
+The application exposes health check endpoints:
+- `GET /health` - Overall health status
+- `GET /health/ready` - Readiness check
+- `GET /health/live` - Liveness check
 
-Test files follow these conventions:
-- Use generated mocks from mockery instead of manual mocks
-- Test files are located next to the code they test
-- Follow table-driven test patterns
+### Security Best Practices
+- Passwords are encrypted using AES-GCM with random nonces
+- All user inputs are validated and sanitized
+- Rate limiting prevents abuse (5 requests per 10 seconds per user)
+- Comprehensive error handling without information leakage
+- Graceful shutdown with proper resource cleanup
 
 ## Project Structure
 
@@ -101,17 +131,47 @@ Test files follow these conventions:
 ├── cmd/
 │   └── bot/              # Main application entry point
 ├── internal/
-│   ├── app/             # Application core logic
-│   ├── handlers/        # Command handlers
+│   ├── app/             # Application core logic & configuration
+│   ├── health/          # Health check endpoints
 │   ├── models/          # Data models
-│   ├── storage/         # Session storage
+│   ├── storage/         # Session storage (memory/MongoDB)
 │   ├── telegram/        # Telegram bot implementation
+│   │   ├── handlers/    # Command handlers with validation
+│   │   └── usecase/     # Business logic layer
+│   ├── utils/           # Utilities (crypto, validation, rate limiting)
 │   └── wodbuster/       # WODBuster client
 ├── .env.dev            # Development environment variables
 ├── Dockerfile          # Container definition
 ├── go.mod             # Go modules file
-├── go.sum             # Go modules checksums
 └── Makefile           # Build commands
+```
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token from BotFather | Required |
+| `APP_ENV` | Environment (dev/prod) | `prod` |
+| `LOGGING_LEVEL` | Log level (DEBUG/INFO/WARN/ERROR) | `DEBUG` |
+| `WODBUSTER_URL` | WODBuster website URL | `https://wodbuster.com` |
+| `ENCRYPTION_KEY` | 32-character key for password encryption | Required |
+| `HEALTH_CHECK_PORT` | Port for health check server | `8080` |
+| `APP_VERSION` | Application version | `1.0.0` |
+| `STORAGE_TYPE` | Storage type (memory/mongodb) | `memory` |
+| `MONGO_URI` | MongoDB connection string | `mongodb://localhost:27017` |
+| `MONGO_DB` | MongoDB database name | `wodbuster` |
+
+## Docker Deployment
+
+```bash
+# Build image
+docker build -t wodbuster-bot .
+
+# Run with environment variables
+docker run -e TELEGRAM_BOT_TOKEN=your_token wodbuster-bot
+
+# Or use docker-compose
+docker-compose up --build
 ```
 
 ## TODO:
@@ -129,3 +189,6 @@ Test files follow these conventions:
 - [ ] Implement a way to view the booked classes
 - [ ] Improve Class Type options to be more user-friendly
 - [ ] Use the API and not the chromedp to book classes
+- [ ] Add metrics collection (Prometheus)
+- [ ] Add distributed tracing
+- [ ] Implement webhook for real-time booking updates

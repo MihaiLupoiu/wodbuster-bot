@@ -8,7 +8,7 @@ import (
 	"context"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -331,9 +331,20 @@ func (_c *MockLogInManager_IsAuthenticated_Call) RunAndReturn(run func(ctx conte
 }
 
 // LogInAndSave provides a mock function for the type MockLogInManager
-func (_mock *MockLogInManager) LogInAndSave(ctx context.Context, chatID int64, email string, password string) {
-	_mock.Called(ctx, chatID, email, password)
-	return
+func (_mock *MockLogInManager) LogInAndSave(ctx context.Context, chatID int64, email string, password string) error {
+	ret := _mock.Called(ctx, chatID, email, password)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LogInAndSave")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64, string, string) error); ok {
+		r0 = returnFunc(ctx, chatID, email, password)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
 }
 
 // MockLogInManager_LogInAndSave_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'LogInAndSave'
@@ -378,13 +389,13 @@ func (_c *MockLogInManager_LogInAndSave_Call) Run(run func(ctx context.Context, 
 	return _c
 }
 
-func (_c *MockLogInManager_LogInAndSave_Call) Return() *MockLogInManager_LogInAndSave_Call {
-	_c.Call.Return()
+func (_c *MockLogInManager_LogInAndSave_Call) Return(err error) *MockLogInManager_LogInAndSave_Call {
+	_c.Call.Return(err)
 	return _c
 }
 
-func (_c *MockLogInManager_LogInAndSave_Call) RunAndReturn(run func(ctx context.Context, chatID int64, email string, password string)) *MockLogInManager_LogInAndSave_Call {
-	_c.Run(run)
+func (_c *MockLogInManager_LogInAndSave_Call) RunAndReturn(run func(ctx context.Context, chatID int64, email string, password string) error) *MockLogInManager_LogInAndSave_Call {
+	_c.Call.Return(run)
 	return _c
 }
 

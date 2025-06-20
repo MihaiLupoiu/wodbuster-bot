@@ -2,9 +2,11 @@ package telegram
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/handlers"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/usecase"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/utils"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -14,15 +16,18 @@ type Bot struct {
 	manager      *usecase.Manager
 	loginHandler *handlers.LoginHandler
 	bookHandler  *handlers.BookingHandler
+	rateLimiter  *utils.RateLimiter
+	stopChan     chan struct{}
 	// removeHandler *handlers.RemoveHandler
 }
 
 type Config struct {
-	Token     string
-	Debug     bool
-	Logger    *slog.Logger
-	APIClient usecase.APIClient
-	Storage   usecase.Storage
+	Token         string
+	Debug         bool
+	Logger        *slog.Logger
+	APIClient     usecase.APIClient
+	Storage       usecase.Storage
+	EncryptionKey string
 }
 
 func New(cfg Config) (*Bot, error) {
@@ -44,7 +49,10 @@ func New(cfg Config) (*Bot, error) {
 		"user", api.Self.UserName,
 		"debug_mode", api.Debug)
 
-	manager := usecase.NewManager(cfg.Storage, cfg.APIClient)
+	manager := usecase.NewManager(cfg.Storage, cfg.APIClient, cfg.EncryptionKey)
+
+	// Create rate limiter: 1 command per 2 seconds, max 5 tokens
+	rateLimiter := utils.NewRateLimiter(2*time.Second, 5)
 
 	return &Bot{
 		api:          api,
@@ -52,29 +60,63 @@ func New(cfg Config) (*Bot, error) {
 		manager:      manager,
 		loginHandler: handlers.NewLoginHandler(api, manager),
 		bookHandler:  handlers.NewBookingHandler(api, manager),
+		rateLimiter:  rateLimiter,
 		// removeHandler: handlers.NewRemoveHandler(api, cfg.Wodbuster, cfg.Logger, manager),
 	}, nil
 }
 
 func (b *Bot) Start() error {
+	b.stopChan = make(chan struct{})
+
 	updateConfig := tgbotapi.NewUpdate(0)
 	updateConfig.Timeout = 60
 
 	updates := b.api.GetUpdatesChan(updateConfig)
 
-	for update := range updates {
-		if update.Message == nil {
-			continue
+	// Start cleanup goroutine for rate limiter
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				b.rateLimiter.Cleanup(24 * time.Hour)
+			case <-b.stopChan:
+				return
+			}
 		}
+	}()
 
-		go b.handleUpdate(update)
+	for {
+		select {
+		case update := <-updates:
+			if update.Message == nil {
+				continue
+			}
+			go b.handleUpdate(update)
+		case <-b.stopChan:
+			b.logger.Info("Bot stopping...")
+			return nil
+		}
 	}
+}
 
+func (b *Bot) Stop() error {
+	if b.stopChan != nil {
+		close(b.stopChan)
+	}
 	return nil
 }
 
 func (b *Bot) handleUpdate(update tgbotapi.Update) {
 	if update.Message == nil {
+		return
+	}
+
+	// Check rate limit
+	if !b.rateLimiter.Allow(update.Message.Chat.ID) {
+		b.sendMessage(update.Message.Chat.ID,
+			"You're sending commands too quickly. Please wait a moment before trying again.")
 		return
 	}
 

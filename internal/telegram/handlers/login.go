@@ -2,15 +2,17 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/utils"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type LogInManager interface {
 	IsAuthenticated(ctx context.Context, chatID int64) bool
-	LogInAndSave(ctx context.Context, chatID int64, email, password string)
+	LogInAndSave(ctx context.Context, chatID int64, email, password string) error
 }
 
 type LogInBotAPI interface {
@@ -39,8 +41,22 @@ func (h *LoginHandler) Handle(update tgbotapi.Update) {
 		return
 	}
 
-	email := args[1]
-	password := args[2]
+	email := utils.SanitizeInput(args[1])
+	password := utils.SanitizeInput(args[2])
+
+	// Validate email format
+	if err := utils.ValidateEmail(email); err != nil {
+		h.sendMessage(update.Message.Chat.ID,
+			"Please provide a valid email address")
+		return
+	}
+
+	// Validate password requirements
+	if err := utils.ValidatePassword(password); err != nil {
+		h.sendMessage(update.Message.Chat.ID,
+			fmt.Sprintf("Invalid password: %s", err.Error()))
+		return
+	}
 
 	// if err := h.wodbuster.Login(email, password); err != nil {
 	// 	h.sendMessage(update.Message.Chat.ID,
@@ -48,7 +64,13 @@ func (h *LoginHandler) Handle(update tgbotapi.Update) {
 	// 	return
 	// }
 
-	h.manager.LogInAndSave(ctx, update.Message.Chat.ID, email, password)
+	if err := h.manager.LogInAndSave(ctx, update.Message.Chat.ID, email, password); err != nil {
+		h.sendMessage(update.Message.Chat.ID,
+			"Failed to save login information. Please try again later.")
+		slog.Error("Failed to save user login", "error", err, "chat_id", update.Message.Chat.ID)
+		return
+	}
+
 	h.sendMessage(update.Message.Chat.ID,
 		"Login successful! You can now use /book and /remove commands.")
 }

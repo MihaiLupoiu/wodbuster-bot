@@ -2,8 +2,15 @@ package usecase
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/utils"
+)
+
+var (
+	ErrUserNotFound = errors.New("user not found")
 )
 
 // Storage defines the interface that all storage implementations must satisfy
@@ -20,14 +27,16 @@ type APIClient interface {
 }
 
 type Manager struct {
-	storage   Storage
-	clientAPI APIClient
+	storage       Storage
+	clientAPI     APIClient
+	encryptionKey string
 }
 
-func NewManager(storage Storage, cientAPI APIClient) *Manager {
+func NewManager(storage Storage, clientAPI APIClient, encryptionKey string) *Manager {
 	return &Manager{
-		storage:   storage,
-		clientAPI: cientAPI,
+		storage:       storage,
+		clientAPI:     clientAPI,
+		encryptionKey: encryptionKey,
 	}
 }
 
@@ -40,16 +49,33 @@ func (m *Manager) GetUser(ctx context.Context, chatID int64) (models.User, bool)
 	return m.storage.GetUser(ctx, chatID)
 }
 
-func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, password string) {
+func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, password string) error {
+	// Encrypt the password before storing
+	encryptedPassword, err := utils.EncryptPassword(password, m.encryptionKey)
+	if err != nil {
+		slog.Error("Failed to encrypt password", "error", err, "chat_id", chatID)
+		return err
+	}
+
 	user := models.User{
 		ChatID:                chatID,
 		IsAuthenticated:       false,
 		Email:                 email,
-		Password:              password,
+		Password:              encryptedPassword,
 		Cookie:                "",
 		ClassBookingSchedules: []models.ClassBookingSchedule{},
 	}
-	m.storage.SaveUser(ctx, user)
+
+	return m.storage.SaveUser(ctx, user)
+}
+
+func (m *Manager) GetDecryptedPassword(ctx context.Context, chatID int64) (string, error) {
+	user, exists := m.storage.GetUser(ctx, chatID)
+	if !exists {
+		return "", ErrUserNotFound
+	}
+
+	return utils.DecryptPassword(user.Password, m.encryptionKey)
 }
 
 func (m *Manager) ScheduleBookClass(ctx context.Context, chatID int64, class models.ClassBookingSchedule) error {

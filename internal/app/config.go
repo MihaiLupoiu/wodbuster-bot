@@ -21,6 +21,13 @@ type Config struct {
 	MongoURI    string `envconfig:"MONGO_URI" default:"mongodb://localhost:27017"`
 	MongoDB     string `envconfig:"MONGO_DB" default:"wodbuster"`
 	StorageType string `envconfig:"STORAGE_TYPE" default:"memory"` // "memory" or "mongodb"
+
+	// Security configuration
+	EncryptionKey string `envconfig:"ENCRYPTION_KEY" default:"your-32-character-secret-key123"`
+
+	// Health check configuration
+	HealthCheckPort string `envconfig:"HEALTH_CHECK_PORT" default:"8080"`
+	Version         string `envconfig:"APP_VERSION" default:"1.0.0"`
 }
 
 func NewConfig(envFile string) (*Config, error) {
