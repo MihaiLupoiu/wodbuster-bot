@@ -24,9 +24,9 @@ type Manager struct {
 	clientAPI APIClient
 }
 
-func NewManager(store Storage, cientAPI APIClient) *Manager {
+func NewManager(storage Storage, cientAPI APIClient) *Manager {
 	return &Manager{
-		storage:   store,
+		storage:   storage,
 		clientAPI: cientAPI,
 	}
 }

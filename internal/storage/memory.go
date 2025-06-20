@@ -35,10 +35,9 @@ func (s *MemoryStorage) GetUser(_ context.Context, chatID int64) (models.User, b
 func (s *MemoryStorage) SaveClassBookingSchedule(_ context.Context, chatID int64, class models.ClassBookingSchedule) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.users[chatID] = models.User{
-		ChatID:                chatID,
-		ClassBookingSchedules: append(s.users[chatID].ClassBookingSchedules, class),
-	}
+	u := s.users[chatID]
+	u.ClassBookingSchedules = append(u.ClassBookingSchedules, class)
+	s.users[chatID] = u
 	return nil
 }
 
