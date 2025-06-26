@@ -13,20 +13,21 @@ import (
 func TestMongoStorage(t *testing.T) {
 	ctx := context.Background()
 	dbName := "test_users"
-	client, uri, err := functionaltest.CreateMongoContainer(ctx, t, dbName)
+	_, uri, err := functionaltest.CreateMongoContainer(ctx, t, dbName)
 	require.NoError(t, err)
 
 	t.Run("SaveAndGetUser", func(t *testing.T) {
 		// Given
-		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
+		storage, err := NewMongoStorage(uri, dbName)
 		require.NoError(t, err)
+		defer storage.Close()
 
 		user := models.User{
-			ChatID:          123,
-			IsAuthenticated: true,
-			Email:           "test@example.com",
-			Password:        "password123",
-			Cookie:          "session-cookie",
+			ChatID:                 123,
+			IsAuthenticated:        true,
+			Email:                  "test@example.com",
+			Password:               "password123",
+			WODBusterSessionCookie: "session-cookie",
 		}
 
 		// When
@@ -36,13 +37,18 @@ func TestMongoStorage(t *testing.T) {
 		// Then
 		got, exists := storage.GetUser(ctx, user.ChatID)
 		assert.True(t, exists)
-		assert.Equal(t, user, got)
+		assert.Equal(t, user.ChatID, got.ChatID)
+		assert.Equal(t, user.IsAuthenticated, got.IsAuthenticated)
+		assert.Equal(t, user.Email, got.Email)
+		assert.Equal(t, user.Password, got.Password)
+		assert.Equal(t, user.WODBusterSessionCookie, got.WODBusterSessionCookie)
 	})
 
 	t.Run("GetNonExistentUser", func(t *testing.T) {
 		// Given
-		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
+		storage, err := NewMongoStorage(uri, dbName)
 		require.NoError(t, err)
+		defer storage.Close()
 
 		// When
 		_, exists := storage.GetUser(ctx, 999)
@@ -53,8 +59,9 @@ func TestMongoStorage(t *testing.T) {
 
 	t.Run("SaveAndGetClassBookingSchedule", func(t *testing.T) {
 		// Given
-		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
+		storage, err := NewMongoStorage(uri, dbName)
 		require.NoError(t, err)
+		defer storage.Close()
 
 		user := models.User{
 			ChatID:          456,
@@ -85,8 +92,9 @@ func TestMongoStorage(t *testing.T) {
 
 	t.Run("SaveMultipleClassBookingSchedules", func(t *testing.T) {
 		// Given
-		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
+		storage, err := NewMongoStorage(uri, dbName)
 		require.NoError(t, err)
+		defer storage.Close()
 
 		user := models.User{
 			ChatID:          789,
@@ -126,8 +134,9 @@ func TestMongoStorage(t *testing.T) {
 
 	t.Run("SaveClassBookingScheduleForNonExistentUser", func(t *testing.T) {
 		// Given
-		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
+		storage, err := NewMongoStorage(uri, dbName)
 		require.NoError(t, err)
+		defer storage.Close()
 
 		class := models.ClassBookingSchedule{
 			ID:        "Monday-10:00-WOD",
@@ -141,13 +150,14 @@ func TestMongoStorage(t *testing.T) {
 
 		// Then
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "user with chatID 999 does not exist")
+		assert.Contains(t, err.Error(), "user with chat ID 999 not found")
 	})
 
 	t.Run("GetClassBookingSchedulesForNonExistentUser", func(t *testing.T) {
 		// Given
-		storage, err := NewMongoStorage(uri, dbName, WithClient(client))
+		storage, err := NewMongoStorage(uri, dbName)
 		require.NoError(t, err)
+		defer storage.Close()
 
 		// When
 		schedules, exists := storage.GetClassBookingSchedules(ctx, 999)

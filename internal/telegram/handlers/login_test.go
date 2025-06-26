@@ -19,7 +19,7 @@ func TestLoginHandler_Handle(t *testing.T) {
 			name:  "successful login",
 			input: "/login testuser@email.com password123",
 			setupMocks: func(api *MockLogInBotAPI, manager *MockLogInManager) {
-				manager.EXPECT().LogInAndSave(mock.Anything, testChatID, "testuser@email.com", "password123")
+				manager.EXPECT().LogInAndSave(mock.Anything, testChatID, "testuser@email.com", "password123").Return(nil)
 				api.EXPECT().Send(mock.MatchedBy(func(c tgbotapi.Chattable) bool {
 					msg, ok := c.(tgbotapi.MessageConfig)
 					return ok && msg.Text == "Login successful! You can now use /book and /remove commands."
