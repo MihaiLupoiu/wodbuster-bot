@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/chromedp/chromedp"
 	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
 )
@@ -26,27 +25,27 @@ func init() {
 
 const testBaseURL = "https://firespain.wodbuster.com"
 
-func setupTestClient(t *testing.T) *Client {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	ctx, _ := chromedp.NewExecAllocator(context.Background(), append(chromedp.DefaultExecAllocatorOptions[:], chromedp.Flag("headless", false))...)
-	// defer cancel()
+// func setupTestClient(t *testing.T) *Client {
+// 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+// 	ctx, _ := chromedp.NewExecAllocator(context.Background(), append(chromedp.DefaultExecAllocatorOptions[:], chromedp.Flag("headless", false))...)
+// 	// defer cancel()
 
-	client, err := NewClient(testBaseURL, WithLogger(logger), WithContext(ctx))
-	assert.NoError(t, err)
-	return client
-}
+// 	client, err := NewClient(testBaseURL, WithLogger(logger), WithContext(ctx))
+// 	assert.NoError(t, err)
+// 	return client
+// }
 
-func getTestCredentials(t *testing.T) (string, string) {
-	user := os.Getenv("TEST_EMAIL")
-	pass := os.Getenv("TEST_PASSWORD")
+// func getTestCredentials(t *testing.T) (string, string) {
+// 	user := os.Getenv("TEST_EMAIL")
+// 	pass := os.Getenv("TEST_PASSWORD")
 
-	if user == "" || pass == "" {
-		t.Logf("Environment variables not set. TEST_EMAIL=%s, TEST_PASSWORD=%s", user, pass)
-		t.Skip("TEST_EMAIL or TEST_PASSWORD environment variables not set")
-	}
+// 	if user == "" || pass == "" {
+// 		t.Logf("Environment variables not set. TEST_EMAIL=%s, TEST_PASSWORD=%s", user, pass)
+// 		t.Skip("TEST_EMAIL or TEST_PASSWORD environment variables not set")
+// 	}
 
-	return user, pass
-}
+// 	return user, pass
+// }
 
 func TestNewClient(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))

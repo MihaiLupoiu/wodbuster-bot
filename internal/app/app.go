@@ -137,7 +137,9 @@ func (a *App) Stop() {
 	a.sessionManager.CloseAllClients()
 
 	// Stop bot
-	a.bot.Stop()
+	if err := a.bot.Stop(); err != nil {
+		a.logger.Error("Error stopping bot", "error", err)
+	}
 
 	// Close storage if it has a Close method
 	if mongoStorage, ok := a.storage.(*storage.MongoStorage); ok {
@@ -192,7 +194,9 @@ func (a *App) Execute() error {
 		return a.shutdown(ctx)
 	case err := <-botErrChan:
 		a.logger.Error("Bot error", "error", err)
-		a.shutdown(ctx)
+		if shutdownErr := a.shutdown(ctx); shutdownErr != nil {
+			a.logger.Error("Error during shutdown", "error", shutdownErr)
+		}
 		return err
 	}
 }
@@ -214,7 +218,9 @@ func (a *App) shutdown(ctx context.Context) error {
 
 		// Stop bot
 		a.logger.Info("Stopping bot...")
-		a.bot.Stop()
+		if err := a.bot.Stop(); err != nil {
+			a.logger.Error("Error stopping bot during shutdown", "error", err)
+		}
 
 		// Note: Health check server will stop when the process exits
 		a.logger.Info("Graceful shutdown completed")

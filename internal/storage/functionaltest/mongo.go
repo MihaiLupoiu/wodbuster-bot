@@ -12,9 +12,8 @@ import (
 )
 
 type MongoDBContainer struct {
-	container testcontainers.Container
-	URI       string
-	DBName    string
+	URI    string
+	DBName string
 }
 
 // CreateMongoContainer creates a MongoDB test container with a unique database
