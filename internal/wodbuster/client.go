@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
 
@@ -15,6 +18,7 @@ type Client struct {
 	cancel  context.CancelFunc
 	logger  *slog.Logger
 	baseURL string
+	cookies []*http.Cookie // Store session cookies
 }
 
 // Option defines the method to customize the Client.
@@ -43,15 +47,53 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
+// WithStoredCookies allows initializing client with pre-stored cookies from MongoDB
+func WithStoredCookies(cookies []*http.Cookie) Option {
+	return func(c *Client) {
+		if cookies != nil {
+			c.cookies = cookies
+		}
+	}
+}
+
+// WithDedicatedContext creates a new dedicated browser context for this client instance
+func WithDedicatedContext() Option {
+	return func(c *Client) {
+		// Create a new allocator context for this client
+		allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(),
+			append(chromedp.DefaultExecAllocatorOptions[:],
+				chromedp.Flag("headless", true),
+				chromedp.Flag("no-sandbox", true),
+				chromedp.Flag("disable-gpu", true),
+				chromedp.Flag("disable-dev-shm-usage", true),
+			)...)
+
+		// Create browser context with timeout
+		ctx, cancel := chromedp.NewContext(allocCtx)
+		ctx, _ = context.WithTimeout(ctx, 60*time.Second)
+
+		// Cancel the old context if it exists
+		if c.cancel != nil {
+			c.cancel()
+		}
+
+		c.ctx = ctx
+		c.cancel = func() {
+			cancel()
+			allocCancel()
+		}
+	}
+}
+
 func NewClient(baseURL string, opts ...Option) (*Client, error) {
 	if baseURL == "" {
 		return nil, ErrMissingBaseURL
 	}
 
-	// Create default client with background context
+	// Create default client with background context and timeout
 	ctx, cancel := chromedp.NewContext(context.Background())
-	// TODO: Consider setting a timeout for the entire browser context
-	//ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	// Set a reasonable timeout for operations
+	ctx, _ = context.WithTimeout(ctx, 60*time.Second)
 
 	client := &Client{
 		ctx:     ctx,
@@ -77,29 +119,50 @@ var (
 	ErrNotImplemented = errors.New("method not implemented")
 )
 
-func (c *Client) LogIn(_ context.Context, email, password string) (string, error) {
+func (c *Client) LogIn(ctx context.Context, email, password string) (string, error) {
 	if email == "" || password == "" {
 		return "", fmt.Errorf("email and password are required")
 	}
 
-	// First navigate to the page using the main context
-	if err := chromedp.Run(c.ctx,
-		chromedp.Navigate("https://wodbuster.com"),
-	); err != nil {
-		return "", fmt.Errorf("failed to navigate to login page: %w", err)
+	// Check if we have valid session cookies first
+	if len(c.cookies) > 0 {
+		if err := c.RestoreCookies(); err != nil {
+			c.logger.Warn("Failed to restore cookies, proceeding with fresh login", "error", err)
+		} else {
+			// Test if session is still valid by navigating to a protected page
+			if err := chromedp.Run(c.ctx, chromedp.Navigate(c.baseURL+"/schedule")); err == nil {
+				c.logger.Info("Session restored successfully", "username", email)
+				return "", nil
+			}
+		}
 	}
 
-	// Create new context after navigation
-	ctx, cancel := chromedp.NewContext(c.ctx,
-		chromedp.WithNewBrowserContext(),
-	)
-	defer cancel()
+	// Perform fresh login
+	actions := []chromedp.Action{
+		chromedp.Navigate(c.baseURL + "/user"),
+		chromedp.WaitVisible(`//input[@id="body_body_CtlLogin_IoEmail"]`),
+		chromedp.WaitVisible(`//input[@id="body_body_CtlLogin_IoPassword"]`),
+		chromedp.SendKeys(`//input[@id="body_body_CtlLogin_IoEmail"]`, email),
+		chromedp.SendKeys(`//input[@id="body_body_CtlLogin_IoPassword"]`, password),
+		chromedp.Sleep(2 * time.Second), // Human-like delay
+		chromedp.Click(`//input[@id="body_body_CtlLogin_CtlAceptar"]`),
+		chromedp.WaitNotPresent(`//input[@id="body_body_CtlLogin_CtlAceptar"]`),
+	}
 
-	actions := login(c.baseURL, email, password)
-	actions = append(actions, rememberBrowser()...)
+	// Add remember browser step if needed
+	actions = append(actions, []chromedp.Action{
+		chromedp.WaitVisible(`//input[@id="body_body_CtlConfiar_CtlNoSeguro"]`),
+		chromedp.Click(`//input[@id="body_body_CtlConfiar_CtlNoSeguro"]`),
+		chromedp.WaitNotPresent(`//input[@id="body_body_CtlConfiar_CtlNoSeguro"]`),
+	}...)
 
-	if err := chromedp.Run(ctx, actions...); err != nil {
+	if err := chromedp.Run(c.ctx, actions...); err != nil {
 		return "", fmt.Errorf("login failed: %w", err)
+	}
+
+	// Save session cookies for future use
+	if err := c.SaveCookies(); err != nil {
+		c.logger.Warn("Failed to save session cookies", "error", err)
 	}
 
 	c.logger.Info("Successfully logged in",
@@ -233,4 +296,104 @@ func (c *Client) RemoveBooking(day, hour string) error {
 		return fmt.Errorf("failed to navigate: %w", err)
 	}
 	return ErrNotImplemented
+}
+
+// SaveCookies extracts and stores cookies from the current browser session
+func (c *Client) SaveCookies() error {
+	var cookies []*http.Cookie
+	err := chromedp.Run(c.ctx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			// Get all cookies from the current page
+			cookiesData, err := network.GetCookies().Do(ctx)
+			if err != nil {
+				return err
+			}
+
+			for _, cookie := range cookiesData {
+				domain := cookie.Domain
+				path := cookie.Path
+				httpCookie := &http.Cookie{
+					Name:     cookie.Name,
+					Value:    cookie.Value,
+					Domain:   domain,
+					Path:     path,
+					Expires:  time.Unix(int64(cookie.Expires), 0),
+					Secure:   cookie.Secure,
+					HttpOnly: cookie.HTTPOnly,
+				}
+				cookies = append(cookies, httpCookie)
+			}
+			return nil
+		}),
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to save cookies: %w", err)
+	}
+
+	c.cookies = cookies
+	return nil
+}
+
+// RestoreCookies sets previously saved cookies in the browser session
+func (c *Client) RestoreCookies() error {
+	if len(c.cookies) == 0 {
+		return nil // No cookies to restore
+	}
+
+	return chromedp.Run(c.ctx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			for _, cookie := range c.cookies {
+				expires := cdp.TimeSinceEpoch(cookie.Expires)
+				err := network.SetCookie(cookie.Name, cookie.Value).
+					WithDomain(cookie.Domain).
+					WithPath(cookie.Path).
+					WithSecure(cookie.Secure).
+					WithHTTPOnly(cookie.HttpOnly).
+					WithExpires(&expires).
+					Do(ctx)
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		}),
+	)
+}
+
+// LoadStoredSession initializes client with cookies from storage and validates session
+func (c *Client) LoadStoredSession(ctx context.Context, cookies []*http.Cookie) error {
+	if len(cookies) == 0 {
+		return fmt.Errorf("no cookies provided")
+	}
+
+	c.cookies = cookies
+
+	// Restore cookies to browser context
+	if err := c.RestoreCookies(); err != nil {
+		return fmt.Errorf("failed to restore cookies: %w", err)
+	}
+
+	// Validate session by navigating to protected page
+	err := chromedp.Run(c.ctx,
+		chromedp.Navigate(c.baseURL+"/schedule"),
+		chromedp.WaitVisible(`#calendar`, chromedp.ByQuery),
+	)
+
+	if err != nil {
+		return fmt.Errorf("session validation failed: %w", err)
+	}
+
+	c.logger.Info("Session loaded and validated successfully")
+	return nil
+}
+
+// GetCookies returns the current stored cookies
+func (c *Client) GetCookies() []*http.Cookie {
+	return c.cookies
+}
+
+// ClearCookies clears all stored cookies
+func (c *Client) ClearCookies() {
+	c.cookies = nil
 }

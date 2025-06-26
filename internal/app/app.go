@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -14,100 +14,154 @@ import (
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/usecase"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/wodbuster"
-	"github.com/go-co-op/gocron"
 )
 
 type App struct {
-	bot           *telegram.Bot
-	config        *Config
-	scheduler     *gocron.Scheduler
-	healthChecker *health.Checker
+	bot              *telegram.Bot
+	manager          *usecase.Manager
+	sessionManager   *usecase.SessionManager
+	bookingScheduler *usecase.BookingScheduler
+	storage          usecase.Storage
+	logger           *slog.Logger
+	config           *Config
+	healthChecker    *health.Checker
 }
 
 func Initialize(envFile string) (*App, error) {
 	config, err := NewConfig(envFile)
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("failed to initialize config: %w", err)
 	}
 
 	application, err := New(config)
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("failed to create application: %w", err)
 	}
 
 	return application, nil
 }
 
 func New(config *Config) (*App, error) {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+
+	// Initialize storage
 	var store usecase.Storage
 	var err error
 
-	// Initialize storage based on configuration
 	switch config.StorageType {
 	case "mongodb":
-		store, err = storage.NewMongoStorage(
-			config.MongoURI,
-			config.MongoDB,
-		)
+		store, err = storage.NewMongoStorage(config.MongoURI, config.MongoDB)
 		if err != nil {
-			config.Logger.Error("Failed to initialize MongoDB storage",
-				"error", err)
-			return nil, err
+			return nil, fmt.Errorf("failed to initialize MongoDB storage: %w", err)
 		}
-	default:
+	case "memory":
 		store = storage.NewMemoryStorage()
+	default:
+		return nil, fmt.Errorf("unsupported storage type: %s", config.StorageType)
 	}
 
-	wodClient, err := wodbuster.NewClient(config.WodbusterURL,
-		wodbuster.WithLogger(config.Logger))
+	// Initialize WODBuster client
+	client, err := wodbuster.NewClient(config.WODBusterURL, wodbuster.WithLogger(logger))
 	if err != nil {
-		config.Logger.Error("Failed to initialize wodbuster client",
-			"error", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to create WODBuster client: %w", err)
 	}
 
-	bot, err := telegram.New(telegram.Config{
-		Token:         config.TelegramToken,
-		Debug:         config.LoggerLevel == slog.LevelDebug,
-		Logger:        config.Logger,
-		APIClient:     wodClient,
-		Storage:       store,
-		EncryptionKey: config.EncryptionKey,
-	})
+	// Create session manager with proper dependencies
+	sessionManager := usecase.NewSessionManager(store, logger, config.WODBusterURL, config.EncryptionKey)
+
+	// Create booking scheduler with session manager dependency
+	bookingScheduler := usecase.NewBookingScheduler(sessionManager, store, logger)
+
+	// Create manager with all dependencies injected
+	manager := usecase.NewManager(
+		store,
+		client,
+		config.EncryptionKey,
+		sessionManager,
+		bookingScheduler,
+		logger,
+	)
+
+	// Initialize Telegram bot
+	bot, err := telegram.New(config.TelegramToken, manager, logger)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create Telegram bot: %w", err)
 	}
 
-	// Initialize scheduler
-	scheduler := gocron.NewScheduler(time.UTC)
-
-	// Initialize health checker
-	healthChecker := health.NewChecker(store, config.Logger, config.Version)
+	// Create health checker
+	healthChecker := health.NewChecker(store, logger, config.Version)
 
 	return &App{
-		bot:           bot,
-		config:        config,
-		scheduler:     scheduler,
-		healthChecker: healthChecker,
+		bot:              bot,
+		manager:          manager,
+		sessionManager:   sessionManager,
+		bookingScheduler: bookingScheduler,
+		storage:          store,
+		logger:           logger,
+		config:           config,
+		healthChecker:    healthChecker,
 	}, nil
 }
 
-func (a *App) Execute() error {
-	// Setup weekly schedule task
-	if _, err := a.scheduler.Every(1).Sunday().At("00:00").Do(func() {
-		// TODO: Implement schedule sending through telegram bot
-		a.config.Logger.Info("Weekly schedule task executed")
-	}); err != nil {
-		a.config.Logger.Error("Failed to schedule weekly task", "error", err)
-		return err
-	}
-	a.scheduler.StartAsync()
+func (a *App) Start(ctx context.Context) error {
+	a.logger.Info("Starting WODBuster Bot",
+		"version", a.config.Version,
+		"storage_type", a.config.StorageType,
+		"wodbuster_url", a.config.WODBusterURL)
 
 	// Start health check server
 	go func() {
 		addr := ":" + a.config.HealthCheckPort
 		if err := a.healthChecker.StartServer(addr); err != nil {
-			a.config.Logger.Error("Health check server failed", "error", err)
+			a.logger.Error("Health check server failed", "error", err)
+		}
+	}()
+
+	// Start booking scheduler at app level (Saturday cronjob)
+	if err := a.bookingScheduler.Start(); err != nil {
+		a.logger.Error("Failed to start booking scheduler", "error", err)
+		return fmt.Errorf("failed to start booking scheduler: %w", err)
+	}
+
+	// Start Telegram bot
+	return a.bot.Start()
+}
+
+func (a *App) Stop() {
+	a.logger.Info("Stopping WODBuster Bot")
+
+	// Stop booking scheduler and close all sessions
+	a.bookingScheduler.Stop()
+	a.sessionManager.CloseAllClients()
+
+	// Stop bot
+	a.bot.Stop()
+
+	// Close storage if it has a Close method
+	if mongoStorage, ok := a.storage.(*storage.MongoStorage); ok {
+		if err := mongoStorage.Close(); err != nil {
+			a.logger.Error("Failed to close MongoDB connection", "error", err)
+		}
+	}
+
+	a.logger.Info("WODBuster Bot stopped")
+}
+
+func (a *App) Execute() error {
+	// Start the Saturday booking scheduler
+	a.logger.Info("Starting Saturday booking scheduler...")
+	if err := a.bookingScheduler.Start(); err != nil {
+		a.logger.Error("Failed to start booking scheduler", "error", err)
+		return err
+	}
+
+	// Start health check server
+	go func() {
+		addr := ":" + a.config.HealthCheckPort
+		if err := a.healthChecker.StartServer(addr); err != nil {
+			a.logger.Error("Health check server failed", "error", err)
 		}
 	}()
 
@@ -127,20 +181,24 @@ func (a *App) Execute() error {
 		}
 	}()
 
+	a.logger.Info("🤖 WODBuster Bot is running...",
+		"health_check_port", a.config.HealthCheckPort,
+		"wodbuster_url", a.config.WODBusterURL)
+
 	// Wait for either a signal or an error
 	select {
 	case sig := <-sigChan:
-		a.config.Logger.Info("Received shutdown signal", "signal", sig.String())
+		a.logger.Info("Received shutdown signal", "signal", sig.String())
 		return a.shutdown(ctx)
 	case err := <-botErrChan:
-		a.config.Logger.Error("Bot error", "error", err)
+		a.logger.Error("Bot error", "error", err)
 		a.shutdown(ctx)
 		return err
 	}
 }
 
 func (a *App) shutdown(ctx context.Context) error {
-	a.config.Logger.Info("Starting graceful shutdown...")
+	a.logger.Info("Starting graceful shutdown...")
 
 	// Create timeout context for shutdown
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -150,25 +208,23 @@ func (a *App) shutdown(ctx context.Context) error {
 	go func() {
 		defer close(done)
 
-		// Stop scheduler first
-		a.config.Logger.Info("Stopping scheduler...")
-		a.scheduler.Stop()
+		// Stop booking scheduler
+		a.logger.Info("Stopping booking scheduler...")
+		a.bookingScheduler.Stop()
 
 		// Stop bot
-		a.config.Logger.Info("Stopping bot...")
-		if err := a.bot.Stop(); err != nil {
-			a.config.Logger.Error("Error stopping bot", "error", err)
-		}
+		a.logger.Info("Stopping bot...")
+		a.bot.Stop()
 
 		// Note: Health check server will stop when the process exits
-		a.config.Logger.Info("Graceful shutdown completed")
+		a.logger.Info("Graceful shutdown completed")
 	}()
 
 	select {
 	case <-done:
 		return nil
 	case <-shutdownCtx.Done():
-		a.config.Logger.Warn("Shutdown timeout reached, forcing exit")
+		a.logger.Warn("Shutdown timeout reached, forcing exit")
 		return shutdownCtx.Err()
 	}
 }

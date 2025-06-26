@@ -15,7 +15,7 @@ type Config struct {
 	Env           string `envconfig:"APP_ENV" default:"prod"`
 	Logger        *slog.Logger
 	LoggerLevel   slog.Level `envconfig:"LOGGING_LEVEL" default:"DEBUG"`
-	WodbusterURL  string     `envconfig:"WODBUSTER_URL" default:"https://wodbuster.com"`
+	WODBusterURL  string     `envconfig:"WODBUSTER_URL" default:"https://wodbuster.com"`
 
 	// MongoDB configuration
 	MongoURI    string `envconfig:"MONGO_URI" default:"mongodb://localhost:27017"`

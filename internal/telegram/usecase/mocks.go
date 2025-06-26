@@ -38,6 +38,68 @@ func (_m *MockStorage) EXPECT() *MockStorage_Expecter {
 	return &MockStorage_Expecter{mock: &_m.Mock}
 }
 
+// GetAllPendingBookings provides a mock function for the type MockStorage
+func (_mock *MockStorage) GetAllPendingBookings(ctx context.Context) ([]models.BookingAttempt, error) {
+	ret := _mock.Called(ctx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetAllPendingBookings")
+	}
+
+	var r0 []models.BookingAttempt
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context) ([]models.BookingAttempt, error)); ok {
+		return returnFunc(ctx)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context) []models.BookingAttempt); ok {
+		r0 = returnFunc(ctx)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.BookingAttempt)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = returnFunc(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockStorage_GetAllPendingBookings_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetAllPendingBookings'
+type MockStorage_GetAllPendingBookings_Call struct {
+	*mock.Call
+}
+
+// GetAllPendingBookings is a helper method to define mock.On call
+//   - ctx context.Context
+func (_e *MockStorage_Expecter) GetAllPendingBookings(ctx interface{}) *MockStorage_GetAllPendingBookings_Call {
+	return &MockStorage_GetAllPendingBookings_Call{Call: _e.mock.On("GetAllPendingBookings", ctx)}
+}
+
+func (_c *MockStorage_GetAllPendingBookings_Call) Run(run func(ctx context.Context)) *MockStorage_GetAllPendingBookings_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStorage_GetAllPendingBookings_Call) Return(bookingAttempts []models.BookingAttempt, err error) *MockStorage_GetAllPendingBookings_Call {
+	_c.Call.Return(bookingAttempts, err)
+	return _c
+}
+
+func (_c *MockStorage_GetAllPendingBookings_Call) RunAndReturn(run func(ctx context.Context) ([]models.BookingAttempt, error)) *MockStorage_GetAllPendingBookings_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetClassBookingSchedules provides a mock function for the type MockStorage
 func (_mock *MockStorage) GetClassBookingSchedules(ctx context.Context, chatID int64) ([]models.ClassBookingSchedule, bool) {
 	ret := _mock.Called(ctx, chatID)
@@ -172,6 +234,63 @@ func (_c *MockStorage_GetUser_Call) RunAndReturn(run func(ctx context.Context, c
 	return _c
 }
 
+// SaveBookingAttempt provides a mock function for the type MockStorage
+func (_mock *MockStorage) SaveBookingAttempt(ctx context.Context, attempt models.BookingAttempt) error {
+	ret := _mock.Called(ctx, attempt)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SaveBookingAttempt")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, models.BookingAttempt) error); ok {
+		r0 = returnFunc(ctx, attempt)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockStorage_SaveBookingAttempt_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveBookingAttempt'
+type MockStorage_SaveBookingAttempt_Call struct {
+	*mock.Call
+}
+
+// SaveBookingAttempt is a helper method to define mock.On call
+//   - ctx context.Context
+//   - attempt models.BookingAttempt
+func (_e *MockStorage_Expecter) SaveBookingAttempt(ctx interface{}, attempt interface{}) *MockStorage_SaveBookingAttempt_Call {
+	return &MockStorage_SaveBookingAttempt_Call{Call: _e.mock.On("SaveBookingAttempt", ctx, attempt)}
+}
+
+func (_c *MockStorage_SaveBookingAttempt_Call) Run(run func(ctx context.Context, attempt models.BookingAttempt)) *MockStorage_SaveBookingAttempt_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 models.BookingAttempt
+		if args[1] != nil {
+			arg1 = args[1].(models.BookingAttempt)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStorage_SaveBookingAttempt_Call) Return(err error) *MockStorage_SaveBookingAttempt_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockStorage_SaveBookingAttempt_Call) RunAndReturn(run func(ctx context.Context, attempt models.BookingAttempt) error) *MockStorage_SaveBookingAttempt_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SaveClassBookingSchedule provides a mock function for the type MockStorage
 func (_mock *MockStorage) SaveClassBookingSchedule(ctx context.Context, chatID int64, class models.ClassBookingSchedule) error {
 	ret := _mock.Called(ctx, chatID, class)
@@ -288,6 +407,75 @@ func (_c *MockStorage_SaveUser_Call) Return(err error) *MockStorage_SaveUser_Cal
 }
 
 func (_c *MockStorage_SaveUser_Call) RunAndReturn(run func(ctx context.Context, user models.User) error) *MockStorage_SaveUser_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// UpdateBookingStatus provides a mock function for the type MockStorage
+func (_mock *MockStorage) UpdateBookingStatus(ctx context.Context, attemptID string, status string, errorMsg string) error {
+	ret := _mock.Called(ctx, attemptID, status, errorMsg)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UpdateBookingStatus")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, string) error); ok {
+		r0 = returnFunc(ctx, attemptID, status, errorMsg)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockStorage_UpdateBookingStatus_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpdateBookingStatus'
+type MockStorage_UpdateBookingStatus_Call struct {
+	*mock.Call
+}
+
+// UpdateBookingStatus is a helper method to define mock.On call
+//   - ctx context.Context
+//   - attemptID string
+//   - status string
+//   - errorMsg string
+func (_e *MockStorage_Expecter) UpdateBookingStatus(ctx interface{}, attemptID interface{}, status interface{}, errorMsg interface{}) *MockStorage_UpdateBookingStatus_Call {
+	return &MockStorage_UpdateBookingStatus_Call{Call: _e.mock.On("UpdateBookingStatus", ctx, attemptID, status, errorMsg)}
+}
+
+func (_c *MockStorage_UpdateBookingStatus_Call) Run(run func(ctx context.Context, attemptID string, status string, errorMsg string)) *MockStorage_UpdateBookingStatus_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		var arg3 string
+		if args[3] != nil {
+			arg3 = args[3].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStorage_UpdateBookingStatus_Call) Return(err error) *MockStorage_UpdateBookingStatus_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockStorage_UpdateBookingStatus_Call) RunAndReturn(run func(ctx context.Context, attemptID string, status string, errorMsg string) error) *MockStorage_UpdateBookingStatus_Call {
 	_c.Call.Return(run)
 	return _c
 }
