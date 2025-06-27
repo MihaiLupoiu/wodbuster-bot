@@ -19,7 +19,6 @@ import (
 type App struct {
 	bot              *telegram.Bot
 	manager          *usecase.Manager
-	sessionManager   *usecase.SessionManager
 	bookingScheduler *usecase.BookingScheduler
 	storage          usecase.Storage
 	logger           *slog.Logger
@@ -68,18 +67,14 @@ func New(config *Config) (*App, error) {
 		return nil, fmt.Errorf("failed to create WODBuster client: %w", err)
 	}
 
-	// Create session manager with proper dependencies
-	sessionManager := usecase.NewSessionManager(store, logger, config.WODBusterURL, config.EncryptionKey)
-
-	// Create booking scheduler with session manager dependency
-	bookingScheduler := usecase.NewBookingScheduler(sessionManager, store, logger)
+	// Create booking scheduler with simplified dependencies
+	bookingScheduler := usecase.NewBookingScheduler(store, client, logger)
 
 	// Create manager with all dependencies injected
 	manager := usecase.NewManager(
 		store,
 		client,
 		config.EncryptionKey,
-		sessionManager,
 		bookingScheduler,
 		logger,
 	)
@@ -96,7 +91,6 @@ func New(config *Config) (*App, error) {
 	return &App{
 		bot:              bot,
 		manager:          manager,
-		sessionManager:   sessionManager,
 		bookingScheduler: bookingScheduler,
 		storage:          store,
 		logger:           logger,
@@ -132,9 +126,8 @@ func (a *App) Start(ctx context.Context) error {
 func (a *App) Stop() {
 	a.logger.Info("Stopping WODBuster Bot")
 
-	// Stop booking scheduler and close all sessions
+	// Stop booking scheduler
 	a.bookingScheduler.Stop()
-	a.sessionManager.CloseAllClients()
 
 	// Stop bot
 	if err := a.bot.Stop(); err != nil {

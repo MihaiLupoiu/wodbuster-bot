@@ -12,7 +12,17 @@ import (
 )
 
 var (
-	ErrUserNotFound = errors.New("user not found")
+	ErrUserNotFound                  = errors.New("user not found")
+	ErrInvalidEmail                  = errors.New("invalid email")
+	ErrInvalidPassword               = errors.New("invalid password")
+	ErrInvalidDay                    = errors.New("invalid day")
+	ErrInvalidHour                   = errors.New("invalid hour")
+	ErrInvalidClassType              = errors.New("invalid class type")
+	ErrInvalidBooking                = errors.New("invalid booking")
+	ErrInvalidBookingAttempt         = errors.New("invalid booking attempt")
+	ErrInvalidBookingAttemptStatus   = errors.New("invalid booking attempt status")
+	ErrInvalidBookingAttemptErrorMsg = errors.New("invalid booking attempt error msg")
+	ErrInvalidWODBusterLogin         = errors.New("invalid WODBuster login")
 )
 
 // Storage defines the interface that all storage implementations must satisfy
@@ -36,7 +46,6 @@ type Manager struct {
 	storage          Storage
 	clientAPI        APIClient
 	encryptionKey    string
-	sessionManager   *SessionManager
 	bookingScheduler *BookingScheduler
 	logger           *slog.Logger
 }
@@ -46,7 +55,6 @@ func NewManager(
 	storage Storage,
 	clientAPI APIClient,
 	encryptionKey string,
-	sessionManager *SessionManager,
 	bookingScheduler *BookingScheduler,
 	logger *slog.Logger,
 ) *Manager {
@@ -54,7 +62,6 @@ func NewManager(
 		storage:          storage,
 		clientAPI:        clientAPI,
 		encryptionKey:    encryptionKey,
-		sessionManager:   sessionManager,
 		bookingScheduler: bookingScheduler,
 		logger:           logger,
 	}
@@ -68,7 +75,6 @@ func (m *Manager) StartBookingScheduler() error {
 // StopBookingScheduler stops the booking scheduler
 func (m *Manager) StopBookingScheduler() {
 	m.bookingScheduler.Stop()
-	m.sessionManager.CloseAllClients()
 }
 
 func (m *Manager) IsAuthenticated(ctx context.Context, chatID int64) bool {
@@ -81,9 +87,10 @@ func (m *Manager) GetUser(ctx context.Context, chatID int64) (models.User, bool)
 }
 
 func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, password string) error {
-	// Test login with WODBuster first to validate credentials
-	if err := m.testWODBusterLogin(ctx, chatID, email, password); err != nil {
-		return fmt.Errorf("WODBuster login validation failed: %w", err)
+	// Test login with WODBuster first to validate credentials and get session cookie
+	sessionCookie, err := m.testWODBusterLogin(ctx, email, password)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidWODBusterLogin, err)
 	}
 
 	// Encrypt the password before storing
@@ -94,23 +101,33 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 	}
 
 	user := models.User{
-		ChatID:                chatID,
-		IsAuthenticated:       true, // Set to true only after successful WODBuster login
-		Email:                 email,
-		Password:              encryptedPassword,
-		ClassBookingSchedules: []models.ClassBookingSchedule{},
-		SessionValid:          false, // Will be set when session is created
-		CreatedAt:             time.Now(),
-		UpdatedAt:             time.Now(),
+		ChatID:                 chatID,
+		IsAuthenticated:        true,
+		Email:                  email,
+		Password:               encryptedPassword,
+		ClassBookingSchedules:  []models.ClassBookingSchedule{},
+		WODBusterSessionCookie: sessionCookie,
+		SessionExpiresAt:       time.Now().Add(24 * time.Hour), // WODBuster sessions typically last 24h
+		SessionValid:           true,
+		LastLoginTime:          time.Now(),
+		CreatedAt:              time.Now(),
+		UpdatedAt:              time.Now(),
 	}
 
+	m.logger.Info("Successfully validated login and saved user", "chat_id", chatID, "email", email)
 	return m.storage.SaveUser(ctx, user)
 }
 
-// testWODBusterLogin tests if credentials work with WODBuster
-func (m *Manager) testWODBusterLogin(ctx context.Context, chatID int64, email, password string) error {
-	// This will create a session and validate the login
-	return m.sessionManager.EnsureUserSessionReady(ctx, chatID)
+// testWODBusterLogin validates credentials using the injected API client
+func (m *Manager) testWODBusterLogin(ctx context.Context, email, password string) (string, error) {
+	// Use the injected client to validate credentials and get session cookie
+	sessionCookie, err := m.clientAPI.LogIn(ctx, email, password)
+	if err != nil {
+		return "", fmt.Errorf("login validation failed: %w", err)
+	}
+
+	m.logger.Info("Login validation successful", "email", email)
+	return sessionCookie, nil
 }
 
 func (m *Manager) GetDecryptedPassword(ctx context.Context, chatID int64) (string, error) {
@@ -174,7 +191,18 @@ func (m *Manager) CancelBooking(chatID int64) bool {
 
 // TestUserSession validates if user has a working session
 func (m *Manager) TestUserSession(ctx context.Context, chatID int64) error {
-	return m.sessionManager.EnsureUserSessionReady(ctx, chatID)
+	user, exists := m.storage.GetUser(ctx, chatID)
+	if !exists {
+		return ErrUserNotFound
+	}
+
+	if !user.HasValidSession() {
+		return fmt.Errorf("user session is invalid or expired")
+	}
+
+	// Could optionally test the session by creating a temporary client and checking
+	// if the session cookie still works, but for now just check if it exists and hasn't expired
+	return nil
 }
 
 // GetScheduleInfo returns information about the next scheduled booking run

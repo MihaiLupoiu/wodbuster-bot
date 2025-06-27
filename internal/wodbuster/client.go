@@ -164,12 +164,21 @@ func (c *Client) LogIn(ctx context.Context, email, password string) (string, err
 	// Save session cookies for future use
 	if err := c.SaveCookies(); err != nil {
 		c.logger.Warn("Failed to save session cookies", "error", err)
+		return "", fmt.Errorf("failed to save session cookies: %w", err)
+	}
+
+	// Extract main session cookie to return
+	sessionCookie := c.extractMainSessionCookie()
+	if sessionCookie == "" {
+		c.logger.Warn("No session cookie found after successful login")
+		return "", fmt.Errorf("no session cookie found after login")
 	}
 
 	c.logger.Info("Successfully logged in",
 		"username", email,
-		"url", c.baseURL)
-	return "", nil
+		"url", c.baseURL,
+		"session_cookie_found", true)
+	return sessionCookie, nil
 }
 
 func login(baseURL, email, password string) []chromedp.Action {
@@ -397,4 +406,19 @@ func (c *Client) GetCookies() []*http.Cookie {
 // ClearCookies clears all stored cookies
 func (c *Client) ClearCookies() {
 	c.cookies = nil
+}
+
+// extractMainSessionCookie finds the main WODBuster session cookie from stored cookies
+func (c *Client) extractMainSessionCookie() string {
+	// Look for common session cookie names (adjust based on WODBuster's actual implementation)
+	sessionCookieNames := []string{"ASP.NET_SessionId", "PHPSESSID", "sessionid", "JSESSIONID"}
+
+	for _, cookie := range c.cookies {
+		for _, name := range sessionCookieNames {
+			if cookie.Name == name && cookie.Value != "" {
+				return cookie.Value
+			}
+		}
+	}
+	return ""
 }

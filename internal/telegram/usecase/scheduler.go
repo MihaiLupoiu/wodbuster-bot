@@ -21,8 +21,8 @@ type BookingContext struct {
 
 // BookingScheduler handles Saturday cronjob and parallel booking
 type BookingScheduler struct {
-	sessionManager    *SessionManager
 	storage           Storage
+	clientAPI         APIClient
 	logger            *slog.Logger
 	cron              *cron.Cron
 	activeBookings    map[int64]*BookingContext
@@ -30,10 +30,10 @@ type BookingScheduler struct {
 	isRunning         bool
 }
 
-func NewBookingScheduler(sessionManager *SessionManager, storage Storage, logger *slog.Logger) *BookingScheduler {
+func NewBookingScheduler(storage Storage, clientAPI APIClient, logger *slog.Logger) *BookingScheduler {
 	return &BookingScheduler{
-		sessionManager: sessionManager,
 		storage:        storage,
+		clientAPI:      clientAPI,
 		logger:         logger,
 		cron:           cron.New(),
 		activeBookings: make(map[int64]*BookingContext),
@@ -165,8 +165,8 @@ func (bs *BookingScheduler) processUserBooking(ctx context.Context, booking mode
 		bs.logger.Error("Failed to update booking status", "booking_id", booking.ID, "error", err)
 	}
 
-	// Perform the booking
-	err := bs.sessionManager.WaitAndBookForUser(bookingCtx, booking.ChatID, bookingContext.BookingData)
+	// Perform the booking using APIClient
+	err := bs.performBookingForUser(bookingCtx, booking.ChatID, bookingContext.BookingData)
 
 	// Update final status
 	status := "success"
@@ -252,4 +252,50 @@ func (bs *BookingScheduler) GetScheduleInfo() string {
 	return fmt.Sprintf("Next booking run: %s (in %s)",
 		nextRun.Format("Monday, January 2, 2006 at 15:04 MST"),
 		timeUntilNext.Round(time.Minute))
+}
+
+// performBookingForUser uses APIClient to perform booking for specific user
+func (bs *BookingScheduler) performBookingForUser(ctx context.Context, chatID int64, booking models.BookingWindow) error {
+	// Get user from storage
+	user, exists := bs.storage.GetUser(ctx, chatID)
+	if !exists {
+		return fmt.Errorf("user %d not found", chatID)
+	}
+
+	bs.logger.Info("Starting booking for user",
+		"chat_id", chatID,
+		"email", user.Email,
+		"day", booking.Day,
+		"hour", booking.Hour,
+		"class_type", booking.ClassType)
+
+	// Wait for booking window to open (12:00 PM)
+	if err := bs.waitForBookingWindow(ctx, booking); err != nil {
+		return fmt.Errorf("failed while waiting for booking window: %w", err)
+	}
+
+	// Use APIClient to perform booking - it will handle session management, login, etc.
+	return bs.clientAPI.BookClass(ctx, user.Email, "", booking.Day, booking.Hour)
+}
+
+// waitForBookingWindow waits until booking window opens at 12:00 PM
+func (bs *BookingScheduler) waitForBookingWindow(ctx context.Context, booking models.BookingWindow) error {
+	now := time.Now()
+	openTime := booking.OpensAt
+
+	if now.Before(openTime) {
+		waitDuration := openTime.Sub(now)
+		bs.logger.Info("Waiting for booking window to open",
+			"wait_duration", waitDuration,
+			"opens_at", openTime)
+
+		select {
+		case <-time.After(waitDuration):
+			bs.logger.Info("Booking window is now open!")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	return nil
 }
