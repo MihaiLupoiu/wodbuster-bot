@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage/functionaltest"
@@ -23,11 +25,19 @@ func TestMongoStorage(t *testing.T) {
 		defer storage.Close()
 
 		user := models.User{
-			ChatID:                 123,
-			IsAuthenticated:        true,
-			Email:                  "test@example.com",
-			Password:               "password123",
-			WODBusterSessionCookie: "session-cookie",
+			ChatID:          123,
+			IsAuthenticated: true,
+			Email:           "test@example.com",
+			Password:        "password123",
+			WODBusterSessionCookie: &http.Cookie{
+				Name:     ".WBAuth",
+				Value:    "session-cookie",
+				Path:     "/",
+				Domain:   "wodbuster.com",
+				Expires:  time.Now().Add(24 * time.Hour),
+				Secure:   true,
+				HttpOnly: true,
+			},
 		}
 
 		// When
@@ -41,7 +51,12 @@ func TestMongoStorage(t *testing.T) {
 		assert.Equal(t, user.IsAuthenticated, got.IsAuthenticated)
 		assert.Equal(t, user.Email, got.Email)
 		assert.Equal(t, user.Password, got.Password)
-		assert.Equal(t, user.WODBusterSessionCookie, got.WODBusterSessionCookie)
+		assert.Equal(t, user.WODBusterSessionCookie.Name, got.WODBusterSessionCookie.Name)
+		assert.Equal(t, user.WODBusterSessionCookie.Value, got.WODBusterSessionCookie.Value)
+		assert.Equal(t, user.WODBusterSessionCookie.Path, got.WODBusterSessionCookie.Path)
+		assert.Equal(t, user.WODBusterSessionCookie.Domain, got.WODBusterSessionCookie.Domain)
+		assert.Equal(t, user.WODBusterSessionCookie.Secure, got.WODBusterSessionCookie.Secure)
+		assert.Equal(t, user.WODBusterSessionCookie.HttpOnly, got.WODBusterSessionCookie.HttpOnly)
 	})
 
 	t.Run("GetNonExistentUser", func(t *testing.T) {

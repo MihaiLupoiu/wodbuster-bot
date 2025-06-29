@@ -61,8 +61,11 @@ func New(config *Config) (*App, error) {
 		return nil, fmt.Errorf("unsupported storage type: %s", config.StorageType)
 	}
 
-	// Initialize WODBuster client
-	client, err := wodbuster.NewClient(config.WODBusterURL, wodbuster.WithLogger(logger))
+	// Initialize WODBuster client with headless mode and anti-detection
+	client, err := wodbuster.NewClient(config.WODBusterURL,
+		wodbuster.WithLogger(logger),
+		wodbuster.WithHeadlessMode(),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create WODBuster client: %w", err)
 	}

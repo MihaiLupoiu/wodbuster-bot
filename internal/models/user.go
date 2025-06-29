@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"net/http"
+	"time"
+)
 
 type User struct {
 	ChatID                int64                  `json:"chat_id" bson:"chat_id"`
@@ -9,12 +12,12 @@ type User struct {
 	Password              string                 `json:"password" bson:"password"`
 	ClassBookingSchedules []ClassBookingSchedule `json:"class_booking_schedules" bson:"class_booking_schedules"`
 	// Session data - simplified to store only the essential WODBuster session cookie
-	WODBusterSessionCookie string    `json:"wodbuster_session_cookie,omitempty" bson:"wodbuster_session_cookie,omitempty"`
-	SessionExpiresAt       time.Time `json:"session_expires_at,omitempty" bson:"session_expires_at,omitempty"`
-	SessionValid           bool      `json:"session_valid" bson:"session_valid"`
-	LastLoginTime          time.Time `json:"last_login_time,omitempty" bson:"last_login_time,omitempty"`
-	CreatedAt              time.Time `json:"created_at" bson:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at" bson:"updated_at"`
+	WODBusterSessionCookie *http.Cookie `json:"wodbuster_session_cookie,omitempty" bson:"wodbuster_session_cookie,omitempty"`
+	SessionExpiresAt       time.Time    `json:"session_expires_at,omitempty" bson:"session_expires_at,omitempty"`
+	SessionValid           bool         `json:"session_valid" bson:"session_valid"`
+	LastLoginTime          time.Time    `json:"last_login_time,omitempty" bson:"last_login_time,omitempty"`
+	CreatedAt              time.Time    `json:"created_at" bson:"created_at"`
+	UpdatedAt              time.Time    `json:"updated_at" bson:"updated_at"`
 }
 
 type ClassBookingSchedule struct {
@@ -53,20 +56,20 @@ type BookingWindow struct {
 // Helper methods for session management
 func (u *User) HasValidSession() bool {
 	return u.SessionValid &&
-		u.WODBusterSessionCookie != "" &&
+		u.WODBusterSessionCookie != nil &&
 		time.Now().Before(u.SessionExpiresAt)
 }
 
-func (u *User) UpdateSession(sessionCookie string, expiresAt time.Time) {
+func (u *User) UpdateSession(sessionCookie *http.Cookie) {
 	u.WODBusterSessionCookie = sessionCookie
 	u.LastLoginTime = time.Now()
-	u.SessionExpiresAt = expiresAt
+	u.SessionExpiresAt = sessionCookie.Expires
 	u.SessionValid = true
 	u.UpdatedAt = time.Now()
 }
 
 func (u *User) ClearSession() {
-	u.WODBusterSessionCookie = ""
+	u.WODBusterSessionCookie = nil
 	u.SessionValid = false
 	u.UpdatedAt = time.Now()
 }

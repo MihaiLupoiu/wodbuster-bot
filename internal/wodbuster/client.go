@@ -56,6 +56,40 @@ func WithStoredCookies(cookies []*http.Cookie) Option {
 	}
 }
 
+// WithHeadlessMode configures chromedp for headless operation with anti-detection
+func WithHeadlessMode() Option {
+	return func(c *Client) {
+		// Create a new allocator context for this client
+		allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(),
+			append(chromedp.DefaultExecAllocatorOptions[:],
+				chromedp.Flag("headless", true),
+				chromedp.Flag("no-sandbox", true),
+				chromedp.Flag("disable-gpu", true),
+				chromedp.Flag("disable-dev-shm-usage", true),
+				chromedp.UserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+				chromedp.Flag("disable-blink-features", "AutomationControlled"),
+				chromedp.Flag("disable-web-security", true),
+				chromedp.Flag("disable-features", "TranslateUI"),
+			)...)
+
+		// Create browser context with timeout
+		ctx, cancel := chromedp.NewContext(allocCtx)
+		ctx, timeoutCancel := context.WithTimeout(ctx, 60*time.Second)
+
+		// Cancel the old context if it exists
+		if c.cancel != nil {
+			c.cancel()
+		}
+
+		c.ctx = ctx
+		c.cancel = func() {
+			timeoutCancel()
+			cancel()
+			allocCancel()
+		}
+	}
+}
+
 // WithDedicatedContext creates a new dedicated browser context for this client instance
 func WithDedicatedContext() Option {
 	return func(c *Client) {
@@ -66,6 +100,10 @@ func WithDedicatedContext() Option {
 				chromedp.Flag("no-sandbox", true),
 				chromedp.Flag("disable-gpu", true),
 				chromedp.Flag("disable-dev-shm-usage", true),
+				chromedp.UserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+				chromedp.Flag("disable-blink-features", "AutomationControlled"),
+				chromedp.Flag("disable-web-security", true),
+				chromedp.Flag("disable-features", "TranslateUI"),
 			)...)
 
 		// Create browser context with timeout
@@ -120,9 +158,9 @@ var (
 	ErrNotImplemented = errors.New("method not implemented")
 )
 
-func (c *Client) LogIn(ctx context.Context, email, password string) (string, error) {
+func (c *Client) LogIn(ctx context.Context, email, password string) (*http.Cookie, error) {
 	if email == "" || password == "" {
-		return "", fmt.Errorf("email and password are required")
+		return nil, fmt.Errorf("email and password are required")
 	}
 
 	// Check if we have valid session cookies first
@@ -133,45 +171,29 @@ func (c *Client) LogIn(ctx context.Context, email, password string) (string, err
 			// Test if session is still valid by navigating to a protected page
 			if err := chromedp.Run(c.ctx, chromedp.Navigate(c.baseURL+"/schedule")); err == nil {
 				c.logger.Info("Session restored successfully", "username", email)
-				return "", nil
+				return nil, nil
 			}
 		}
 	}
 
-	// Perform fresh login
-	actions := []chromedp.Action{
-		chromedp.Navigate(c.baseURL + "/user"),
-		chromedp.WaitVisible(`//input[@id="body_body_CtlLogin_IoEmail"]`),
-		chromedp.WaitVisible(`//input[@id="body_body_CtlLogin_IoPassword"]`),
-		chromedp.SendKeys(`//input[@id="body_body_CtlLogin_IoEmail"]`, email),
-		chromedp.SendKeys(`//input[@id="body_body_CtlLogin_IoPassword"]`, password),
-		chromedp.Sleep(2 * time.Second), // Human-like delay
-		chromedp.Click(`//input[@id="body_body_CtlLogin_CtlAceptar"]`),
-		chromedp.WaitNotPresent(`//input[@id="body_body_CtlLogin_CtlAceptar"]`),
-	}
-
-	// Add remember browser step if needed
-	actions = append(actions, []chromedp.Action{
-		chromedp.WaitVisible(`//input[@id="body_body_CtlConfiar_CtlNoSeguro"]`),
-		chromedp.Click(`//input[@id="body_body_CtlConfiar_CtlNoSeguro"]`),
-		chromedp.WaitNotPresent(`//input[@id="body_body_CtlConfiar_CtlNoSeguro"]`),
-	}...)
+	actions := login(c.baseURL, email, password)
+	actions = append(actions, rememberBrowser()...)
 
 	if err := chromedp.Run(c.ctx, actions...); err != nil {
-		return "", fmt.Errorf("login failed: %w", err)
+		return nil, fmt.Errorf("login failed: %w", err)
 	}
 
 	// Save session cookies for future use
 	if err := c.SaveCookies(); err != nil {
 		c.logger.Warn("Failed to save session cookies", "error", err)
-		return "", fmt.Errorf("failed to save session cookies: %w", err)
+		return nil, fmt.Errorf("failed to save session cookies: %w", err)
 	}
 
 	// Extract main session cookie to return
 	sessionCookie := c.extractMainSessionCookie()
-	if sessionCookie == "" {
+	if sessionCookie == nil {
 		c.logger.Warn("No session cookie found after successful login")
-		return "", fmt.Errorf("no session cookie found after login")
+		return nil, fmt.Errorf("no session cookie found after login")
 	}
 
 	c.logger.Info("Successfully logged in",
@@ -206,10 +228,13 @@ func login(baseURL, email, password string) []chromedp.Action {
 
 func rememberBrowser() []chromedp.Action {
 	return []chromedp.Action{
-		// Wait for remember session confirmation button
-		chromedp.WaitVisible(`//input[@id="body_body_CtlConfiar_CtlNoSeguro"]`),
-		chromedp.Click(`//input[@id="body_body_CtlConfiar_CtlNoSeguro"]`),
-		chromedp.WaitNotPresent(`//input[@id="body_body_CtlConfiar_CtlNoSeguro"]`),
+		chromedp.WaitVisible(`//div[@id="body_body_CtlUp"]`),
+		chromedp.Sleep(2 * time.Second),
+
+		// Use the exact JavaScript approach that worked
+		chromedp.Evaluate(`document.getElementById('body_body_CtlConfiar_CtlSeguro').click()`, nil),
+
+		chromedp.Sleep(3 * time.Second),
 	}
 }
 
@@ -409,16 +434,15 @@ func (c *Client) ClearCookies() {
 }
 
 // extractMainSessionCookie finds the main WODBuster session cookie from stored cookies
-func (c *Client) extractMainSessionCookie() string {
-	// Look for common session cookie names (adjust based on WODBuster's actual implementation)
-	sessionCookieNames := []string{"ASP.NET_SessionId", "PHPSESSID", "sessionid", "JSESSIONID"}
+func (c *Client) extractMainSessionCookie() *http.Cookie {
+	sessionCookieNames := []string{".WBAuth"}
 
 	for _, cookie := range c.cookies {
 		for _, name := range sessionCookieNames {
 			if cookie.Name == name && cookie.Value != "" {
-				return cookie.Value
+				return cookie
 			}
 		}
 	}
-	return ""
+	return nil
 }

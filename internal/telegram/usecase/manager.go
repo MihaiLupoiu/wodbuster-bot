@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
@@ -38,7 +39,7 @@ type Storage interface {
 }
 
 type APIClient interface {
-	LogIn(ctx context.Context, email, password string) (string, error)
+	LogIn(ctx context.Context, email, password string) (*http.Cookie, error)
 	BookClass(ctx context.Context, email, password string, day, hour string) error
 }
 
@@ -107,7 +108,7 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 		Password:               encryptedPassword,
 		ClassBookingSchedules:  []models.ClassBookingSchedule{},
 		WODBusterSessionCookie: sessionCookie,
-		SessionExpiresAt:       time.Now().Add(24 * time.Hour), // WODBuster sessions typically last 24h
+		SessionExpiresAt:       sessionCookie.Expires,
 		SessionValid:           true,
 		LastLoginTime:          time.Now(),
 		CreatedAt:              time.Now(),
@@ -119,11 +120,11 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 }
 
 // testWODBusterLogin validates credentials using the injected API client
-func (m *Manager) testWODBusterLogin(ctx context.Context, email, password string) (string, error) {
+func (m *Manager) testWODBusterLogin(ctx context.Context, email, password string) (*http.Cookie, error) {
 	// Use the injected client to validate credentials and get session cookie
 	sessionCookie, err := m.clientAPI.LogIn(ctx, email, password)
 	if err != nil {
-		return "", fmt.Errorf("login validation failed: %w", err)
+		return nil, fmt.Errorf("login validation failed: %w", err)
 	}
 
 	m.logger.Info("Login validation successful", "email", email)

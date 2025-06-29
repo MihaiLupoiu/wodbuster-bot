@@ -6,6 +6,7 @@ package usecase
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	mock "github.com/stretchr/testify/mock"
@@ -583,22 +584,24 @@ func (_c *MockAPIClient_BookClass_Call) RunAndReturn(run func(ctx context.Contex
 }
 
 // LogIn provides a mock function for the type MockAPIClient
-func (_mock *MockAPIClient) LogIn(ctx context.Context, email string, password string) (string, error) {
+func (_mock *MockAPIClient) LogIn(ctx context.Context, email string, password string) (*http.Cookie, error) {
 	ret := _mock.Called(ctx, email, password)
 
 	if len(ret) == 0 {
 		panic("no return value specified for LogIn")
 	}
 
-	var r0 string
+	var r0 *http.Cookie
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (string, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (*http.Cookie, error)); ok {
 		return returnFunc(ctx, email, password)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) string); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) *http.Cookie); ok {
 		r0 = returnFunc(ctx, email, password)
 	} else {
-		r0 = ret.Get(0).(string)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*http.Cookie)
+		}
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
 		r1 = returnFunc(ctx, email, password)
@@ -644,12 +647,12 @@ func (_c *MockAPIClient_LogIn_Call) Run(run func(ctx context.Context, email stri
 	return _c
 }
 
-func (_c *MockAPIClient_LogIn_Call) Return(s string, err error) *MockAPIClient_LogIn_Call {
-	_c.Call.Return(s, err)
+func (_c *MockAPIClient_LogIn_Call) Return(cookie *http.Cookie, err error) *MockAPIClient_LogIn_Call {
+	_c.Call.Return(cookie, err)
 	return _c
 }
 
-func (_c *MockAPIClient_LogIn_Call) RunAndReturn(run func(ctx context.Context, email string, password string) (string, error)) *MockAPIClient_LogIn_Call {
+func (_c *MockAPIClient_LogIn_Call) RunAndReturn(run func(ctx context.Context, email string, password string) (*http.Cookie, error)) *MockAPIClient_LogIn_Call {
 	_c.Call.Return(run)
 	return _c
 }
