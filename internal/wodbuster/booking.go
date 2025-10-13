@@ -29,8 +29,8 @@ func (c *Client) BookClass(_ context.Context, email, password string, day, class
 		"hour", hour)
 
 	actions := login(c.baseURL, email, password)
-	actions = append(actions, rememberBrowser()...)
-	actions = append(actions, getAvailableClasses()...)
+	actions = append(actions, notRememberBrowser()...)
+	actions = append(actions, getAvailableClasses(false)...)
 	actions = append(actions, selectDay(day)...)
 	actions = append(actions, bookClass(classType, hour)...)
 	actions = append(actions, acceptConfirmation()...)
@@ -83,7 +83,7 @@ func bookClass(classType string, hour string) []chromedp.Action {
 		// Click the "Reservar" button
 		chromedp.Click(xpathReserve, chromedp.BySearch),
 
-		chromedp.Sleep(1 * time.Second),
+		chromedp.Sleep(100 * time.Millisecond),
 	}
 }
 
@@ -97,7 +97,7 @@ func acceptConfirmation() []chromedp.Action {
 		chromedp.WaitVisible(xpath),
 		// Click the "Aceptar" button
 		chromedp.Click(xpath),
-		chromedp.Sleep(1 * time.Second),
+		chromedp.Sleep(100 * time.Millisecond),
 	}
 }
 

@@ -16,7 +16,7 @@ func (c *Client) GetAvailableClasses(email, password string, day string) ([]Clas
 
 	actions := login(c.baseURL, email, password)
 	actions = append(actions, rememberBrowser()...)
-	actions = append(actions, getAvailableClasses()...)
+	actions = append(actions, getAvailableClasses(false)...)
 
 	if day != "" {
 		actions = append(actions, selectDay(day)...)
@@ -62,15 +62,19 @@ func (c *Client) GetAvailableClasses(email, password string, day string) ([]Clas
 }
 
 // getAvailableClasses navigates to the class booking page
-func getAvailableClasses() []chromedp.Action {
-	return []chromedp.Action{
+func getAvailableClasses(nextWeek bool) []chromedp.Action {
+
+	actions := []chromedp.Action{
 		// Click the link
 		chromedp.Click(`//a[contains(text(), 'Reservar clases')]`),
 		// Wait for form elements to be present
 		chromedp.WaitVisible(`//div[@id="calendar"]`),
-		// Click on the next week button
-		chromedp.Click(`a.next.icon`, chromedp.ByQuery),
 	}
+	if nextWeek {
+		actions = append(actions, chromedp.Click(`a.next.icon`, chromedp.ByQuery))
+	}
+
+	return actions
 }
 
 // parseClassNode extracts class information from a DOM node
