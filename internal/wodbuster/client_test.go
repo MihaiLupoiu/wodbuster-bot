@@ -25,27 +25,26 @@ func init() {
 
 const testBaseURL = "https://firespain.wodbuster.com"
 
-// func setupTestClient(t *testing.T) *Client {
-// 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-// 	ctx, _ := chromedp.NewExecAllocator(context.Background(), append(chromedp.DefaultExecAllocatorOptions[:], chromedp.Flag("headless", false))...)
-// 	// defer cancel()
+func setupTestClient(t *testing.T) *Client {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-// 	client, err := NewClient(testBaseURL, WithLogger(logger), WithContext(ctx))
-// 	assert.NoError(t, err)
-// 	return client
-// }
+	// Set headless mode to false for testing
+	client, err := NewClient(testBaseURL, WithLogger(logger), WithHeadlessMode(false))
+	assert.NoError(t, err)
+	return client
+}
 
-// func getTestCredentials(t *testing.T) (string, string) {
-// 	user := os.Getenv("TEST_EMAIL")
-// 	pass := os.Getenv("TEST_PASSWORD")
+func getTestCredentials(t *testing.T) (string, string) {
+	user := os.Getenv("TEST_EMAIL")
+	pass := os.Getenv("TEST_PASSWORD")
 
-// 	if user == "" || pass == "" {
-// 		t.Logf("Environment variables not set. TEST_EMAIL=%s, TEST_PASSWORD=%s", user, pass)
-// 		t.Skip("TEST_EMAIL or TEST_PASSWORD environment variables not set")
-// 	}
+	if user == "" || pass == "" {
+		t.Logf("Environment variables not set. TEST_EMAIL=%s, TEST_PASSWORD=%s", user, pass)
+		t.Skip("TEST_EMAIL or TEST_PASSWORD environment variables not set")
+	}
 
-// 	return user, pass
-// }
+	return user, pass
+}
 
 func TestNewClient(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -133,36 +132,57 @@ func TestLogin(t *testing.T) {
 	// 	assert.Contains(t, err.Error(), "email and password are required")
 	// })
 
-	// t.Run("with valid credentials", func(t *testing.T) {
-	// 	user, pass := getTestCredentials(t)
-	// 	client := setupTestClient(t)
-	// 	defer client.Close()
+	t.Run("with valid credentials", func(t *testing.T) {
+		user, pass := getTestCredentials(t)
+		client := setupTestClient(t)
+		defer client.Close()
 
-	// 	err := client.Login(user, pass)
-	// 	assert.NoError(t, err)
-	// })
+		cookie, err := client.LogIn(context.Background(), user, pass)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, cookie)
+	})
 }
 
-// func TestGetAvailableClasses(t *testing.T) {
-// 	user, pass := getTestCredentials(t)
-// 	client := setupTestClient(t)
-// 	defer client.Close()
+func TestGetAvailableClasses(t *testing.T) {
+	user, pass := getTestCredentials(t)
+	client := setupTestClient(t)
+	defer client.Close()
 
-// 	classes, err := client.GetAvailableClasses(user, pass)
-// 	assert.Error(t, err)
-// 	assert.Contains(t, err.Error(), "failed to navigate")
-// 	assert.Nil(t, classes)
-// }
+	// Test getting classes for a specific day (Monday)
+	// Can use either string or constant
+	classes, err := client.GetAvailableClasses(user, pass, string(DayMonday))
+	if err != nil {
+		t.Logf("Error getting available classes: %v", err)
+	}
 
-// func TestBookClass(t *testing.T) {
-// 	user, pass := getTestCredentials(t)
-// 	client := setupTestClient(t)
-// 	defer client.Close()
+	// Log the classes found
+	if len(classes) > 0 {
+		t.Logf("Found %d classes:", len(classes))
+		for _, class := range classes {
+			t.Logf("  - %s at %s (Available: %v)", class.ClassType, class.Hour, class.Available)
+		}
+	}
+}
 
-// 	err := client.BookClass(user, pass, "X", "09:00")
-// 	assert.Error(t, err)
-// 	assert.Contains(t, err.Error(), "failed to navigate")
-// }
+func TestBookClass(t *testing.T) {
+	t.Skip("Skipping live booking test - uncomment to test manually")
+
+	user, pass := getTestCredentials(t)
+	client := setupTestClient(t)
+	defer client.Close()
+
+	// Book a Wod class on Wednesday at 19:30
+	// Can use constants (converted to strings) or plain strings
+	err := client.BookClass(context.Background(), user, pass, string(DayWednesday), string(ClassTypeWod), "19:30")
+	if err != nil {
+		t.Logf("Error booking class: %v", err)
+	} else {
+		t.Log("Successfully booked class!")
+	}
+
+	// Alternative: using plain strings directly
+	// err := client.BookClass(context.Background(), user, pass, "X", "Wod", "19:30")
+}
 
 // func TestRemoveBooking(t *testing.T) {
 // 	client := setupTestClient(t)
