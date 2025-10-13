@@ -40,7 +40,7 @@ type Storage interface {
 
 type APIClient interface {
 	LogIn(ctx context.Context, email, password string) (*http.Cookie, error)
-	BookClass(ctx context.Context, email, password string, day, hour string) error
+	BookClass(ctx context.Context, email, password string, day, classType, hour string) error
 }
 
 type Manager struct {

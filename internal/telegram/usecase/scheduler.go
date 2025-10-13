@@ -275,7 +275,7 @@ func (bs *BookingScheduler) performBookingForUser(ctx context.Context, chatID in
 	}
 
 	// Use APIClient to perform booking - it will handle session management, login, etc.
-	return bs.clientAPI.BookClass(ctx, user.Email, "", booking.Day, booking.Hour)
+	return bs.clientAPI.BookClass(ctx, user.Email, "", booking.Day, booking.ClassType, booking.Hour)
 }
 
 // waitForBookingWindow waits until booking window opens at 12:00 PM

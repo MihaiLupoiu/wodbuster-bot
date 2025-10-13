@@ -64,7 +64,7 @@ func New(config *Config) (*App, error) {
 	// Initialize WODBuster client with headless mode and anti-detection
 	client, err := wodbuster.NewClient(config.WODBusterURL,
 		wodbuster.WithLogger(logger),
-		wodbuster.WithHeadlessMode(),
+		wodbuster.WithHeadlessMode(true),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create WODBuster client: %w", err)

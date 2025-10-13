@@ -509,16 +509,16 @@ func (_m *MockAPIClient) EXPECT() *MockAPIClient_Expecter {
 }
 
 // BookClass provides a mock function for the type MockAPIClient
-func (_mock *MockAPIClient) BookClass(ctx context.Context, email string, password string, day string, hour string) error {
-	ret := _mock.Called(ctx, email, password, day, hour)
+func (_mock *MockAPIClient) BookClass(ctx context.Context, email string, password string, day string, classType string, hour string) error {
+	ret := _mock.Called(ctx, email, password, day, classType, hour)
 
 	if len(ret) == 0 {
 		panic("no return value specified for BookClass")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, string, string) error); ok {
-		r0 = returnFunc(ctx, email, password, day, hour)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, string, string, string) error); ok {
+		r0 = returnFunc(ctx, email, password, day, classType, hour)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -535,12 +535,13 @@ type MockAPIClient_BookClass_Call struct {
 //   - email string
 //   - password string
 //   - day string
+//   - classType string
 //   - hour string
-func (_e *MockAPIClient_Expecter) BookClass(ctx interface{}, email interface{}, password interface{}, day interface{}, hour interface{}) *MockAPIClient_BookClass_Call {
-	return &MockAPIClient_BookClass_Call{Call: _e.mock.On("BookClass", ctx, email, password, day, hour)}
+func (_e *MockAPIClient_Expecter) BookClass(ctx interface{}, email interface{}, password interface{}, day interface{}, classType interface{}, hour interface{}) *MockAPIClient_BookClass_Call {
+	return &MockAPIClient_BookClass_Call{Call: _e.mock.On("BookClass", ctx, email, password, day, classType, hour)}
 }
 
-func (_c *MockAPIClient_BookClass_Call) Run(run func(ctx context.Context, email string, password string, day string, hour string)) *MockAPIClient_BookClass_Call {
+func (_c *MockAPIClient_BookClass_Call) Run(run func(ctx context.Context, email string, password string, day string, classType string, hour string)) *MockAPIClient_BookClass_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -562,12 +563,17 @@ func (_c *MockAPIClient_BookClass_Call) Run(run func(ctx context.Context, email 
 		if args[4] != nil {
 			arg4 = args[4].(string)
 		}
+		var arg5 string
+		if args[5] != nil {
+			arg5 = args[5].(string)
+		}
 		run(
 			arg0,
 			arg1,
 			arg2,
 			arg3,
 			arg4,
+			arg5,
 		)
 	})
 	return _c
@@ -578,7 +584,7 @@ func (_c *MockAPIClient_BookClass_Call) Return(err error) *MockAPIClient_BookCla
 	return _c
 }
 
-func (_c *MockAPIClient_BookClass_Call) RunAndReturn(run func(ctx context.Context, email string, password string, day string, hour string) error) *MockAPIClient_BookClass_Call {
+func (_c *MockAPIClient_BookClass_Call) RunAndReturn(run func(ctx context.Context, email string, password string, day string, classType string, hour string) error) *MockAPIClient_BookClass_Call {
 	_c.Call.Return(run)
 	return _c
 }

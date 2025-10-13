@@ -2,11 +2,40 @@ package wodbuster
 
 import "time"
 
+// ClassType represents the type of class available for booking
+type ClassType string
+
+// Available class types as constants
+const (
+	ClassTypeWod         ClassType = "Wod"
+	ClassTypeOpenBox     ClassType = "Open box"
+	ClassTypeOpenTotal   ClassType = "Open TOTAL"
+	ClassTypeHyrox       ClassType = "HYROX"
+	ClassTypeGymaquinas  ClassType = "GYMaquinas"
+	ClassTypePiernaGlute ClassType = "Pierna/Gluteo"
+	ClassTypeBomberos    ClassType = "BOMBEROS"
+)
+
+// Day represents a day of the week abbreviation
+type Day string
+
+// Day abbreviations as constants
+const (
+	DayMonday    Day = "L" // Lunes
+	DayTuesday   Day = "M" // Martes
+	DayWednesday Day = "X" // Miércoles
+	DayThursday  Day = "J" // Jueves
+	DayFriday    Day = "V" // Viernes
+	DaySaturday  Day = "S" // Sábado
+	DaySunday    Day = "D" // Domingo
+)
+
+// ClassSchedule represents a class in the schedule
 type ClassSchedule struct {
-	Day       string
-	Hour      string
-	Available bool
-	BookedBy  string
+	Day       Day       `json:"day"`        // Day abbreviation (L, M, X, J, V, S, D)
+	Hour      string    `json:"hour"`       // Time in format HH:MM (e.g., "07:00")
+	ClassType ClassType `json:"class_type"` // Class type (e.g., Wod, Open box, HYROX)
+	Available bool      `json:"available"`  // Whether the class has available spots
 }
 
 // UserSession represents a persistent browser session with WODBuster
@@ -37,9 +66,9 @@ type SessionCookie struct {
 type BookingAttempt struct {
 	ID          string    `bson:"_id" json:"id"`
 	ChatID      int64     `bson:"chat_id" json:"chat_id"` // Only reference to user
-	Day         string    `bson:"day" json:"day"`
+	Day         Day       `bson:"day" json:"day"`
 	Hour        string    `bson:"hour" json:"hour"`
-	ClassType   string    `bson:"class_type" json:"class_type"`
+	ClassType   ClassType `bson:"class_type" json:"class_type"`
 	Status      string    `bson:"status" json:"status"` // pending, success, failed, expired
 	AttemptTime time.Time `bson:"attempt_time" json:"attempt_time"`
 	ErrorMsg    string    `bson:"error_msg,omitempty" json:"error_msg,omitempty"`
@@ -50,9 +79,9 @@ type BookingAttempt struct {
 
 // BookingWindow represents when booking becomes available
 type BookingWindow struct {
-	Day           string        `json:"day"`
+	Day           Day           `json:"day"`
 	Hour          string        `json:"hour"`
-	ClassType     string        `json:"class_type"`
+	ClassType     ClassType     `json:"class_type"`
 	OpensAt       time.Time     `json:"opens_at"`       // When booking opens
 	TimeRemaining time.Duration `json:"time_remaining"` // Time until booking opens
 	IsOpen        bool          `json:"is_open"`        // Whether booking is currently open
