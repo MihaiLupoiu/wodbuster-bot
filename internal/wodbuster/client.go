@@ -77,7 +77,7 @@ func WithHeadlessMode(headless bool) Option {
 
 		// Create browser context with timeout
 		ctx, cancel := chromedp.NewContext(allocCtx)
-		ctx, timeoutCancel := context.WithTimeout(ctx, 60*time.Second)
+		ctx, timeoutCancel := context.WithTimeout(ctx, 60*time.Minute)
 
 		// Cancel the old context if it exists
 		if c.cancel != nil {
@@ -111,7 +111,7 @@ func WithDedicatedContext() Option {
 
 		// Create browser context with timeout
 		ctx, cancel := chromedp.NewContext(allocCtx)
-		ctx, timeoutCancel := context.WithTimeout(ctx, 60*time.Second)
+		ctx, timeoutCancel := context.WithTimeout(ctx, 60*time.Minute)
 
 		// Cancel the old context if it exists
 		if c.cancel != nil {
@@ -136,7 +136,7 @@ func NewClient(baseURL string, opts ...Option) (*Client, error) {
 	// Create default client with background context and timeout
 	ctx, cancel := chromedp.NewContext(context.Background())
 	// Set a reasonable timeout for operations
-	ctx, timeoutCancel := context.WithTimeout(ctx, 60*time.Second)
+	ctx, timeoutCancel := context.WithTimeout(ctx, 60*time.Minute)
 
 	client := &Client{
 		ctx:     ctx,

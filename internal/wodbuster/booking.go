@@ -30,7 +30,7 @@ func (c *Client) BookClass(_ context.Context, email, password string, day, class
 
 	actions := login(c.baseURL, email, password)
 	actions = append(actions, notRememberBrowser()...)
-	actions = append(actions, getAvailableClasses(false)...)
+	actions = append(actions, getAvailableClasses(true)...) // false for current week
 	actions = append(actions, selectDay(day)...)
 	actions = append(actions, bookClass(classType, hour)...)
 	actions = append(actions, acceptConfirmation()...)
