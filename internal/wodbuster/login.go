@@ -103,3 +103,24 @@ func notRememberBrowser() []chromedp.Action {
 		chromedp.Sleep(3 * time.Second),
 	}
 }
+
+func (c *Client) LoginOnly(email, password string) error {
+	if err := chromedp.Run(c.ctx, login(c.baseURL, email, password)...); err != nil {
+		return fmt.Errorf("failed to login: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) NotRememberBrowser() error {
+	if err := chromedp.Run(c.ctx, notRememberBrowser()...); err != nil {
+		return fmt.Errorf("failed to not remember browser: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) RememberBrowser() error {
+	if err := chromedp.Run(c.ctx, rememberBrowser()...); err != nil {
+		return fmt.Errorf("failed to remember browser: %w", err)
+	}
+	return nil
+}

@@ -115,3 +115,35 @@ func selectDay(day string) []chromedp.Action {
 		chromedp.Click(xpath),
 	}
 }
+
+func (c *Client) BookClassOnly(day, classType, hour string) error {
+	if day == "" || classType == "" || hour == "" {
+		return fmt.Errorf("day, classType, and hour are required")
+	}
+
+	c.logger.Info("Starting class booking",
+		"day", day,
+		"classType", classType,
+		"hour", hour)
+
+	actions := append([]chromedp.Action{}, bookClass(classType, hour)...)
+	actions = append(actions, acceptConfirmation()...)
+	actions = append(actions,
+		chromedp.Sleep(1*time.Second))
+
+	if err := chromedp.Run(c.ctx, actions...); err != nil {
+		c.logger.Error("Failed to book class",
+			"error", err,
+			"day", day,
+			"classType", classType,
+			"hour", hour)
+		return fmt.Errorf("failed to book class: %w", err)
+	}
+
+	c.logger.Info("Successfully booked class",
+		"day", day,
+		"classType", classType,
+		"hour", hour)
+
+	return nil
+}

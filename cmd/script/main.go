@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -27,6 +28,67 @@ func main() {
 	const testBaseURL = "https://firespain.wodbuster.com"
 	user := os.Getenv("TEST_EMAIL")
 	pass := os.Getenv("TEST_PASSWORD")
+
+	client, err := wodbuster.NewClient(testBaseURL, wodbuster.WithHeadlessMode(false))
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+
+	defer client.Close()
+
+	err = client.LoginOnly(user, pass)
+	if err != nil {
+		log.Fatalf("Failed to login: %v", err)
+	}
+
+	err = client.NotRememberBrowser()
+	if err != nil {
+		log.Fatalf("Failed to not remember browser: %v", err)
+	}
+
+	classes, err := client.GetAvailableClassesOnly("L")
+	if err != nil {
+		log.Fatalf("Failed to get available classes: %v", err)
+	}
+	fmt.Println(classes)
+
+	err = client.BookClassOnly("L", "Wod", "07:00")
+	if err != nil {
+		log.Fatalf("Failed to book class: %v", err)
+	}
+
+	// ===============================
+	classes, err = client.GetAvailableClassesOnly("X")
+	if err != nil {
+		log.Fatalf("Failed to get available classes: %v", err)
+	}
+	fmt.Println(classes)
+
+	err = client.BookClassOnly("X", "Wod", "07:00")
+	if err != nil {
+		log.Fatalf("Failed to book class: %v", err)
+	}
+
+	// ===============================
+
+	classes, err = client.GetAvailableClassesOnly("V")
+	if err != nil {
+		log.Fatalf("Failed to get available classes: %v", err)
+	}
+	fmt.Println(classes)
+
+	err = client.BookClassOnly("V", "Wod", "07:00")
+	if err != nil {
+		log.Fatalf("Failed to book class: %v", err)
+	}
+
+	// ===============================
+
+	time.Sleep(60 * time.Minute)
+
+	os.Exit(0)
+
+	// ===============================
 
 	// cookie, err := client.LogIn(context.Background(), user, pass)
 	// if err != nil {
@@ -94,5 +156,5 @@ func main() {
 		}
 	}()
 
-	time.Sleep(30 * time.Second)
+	time.Sleep(30 * time.Minute)
 }
