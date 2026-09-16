@@ -1,0 +1,21 @@
+{
+  "box": "firespain",
+  "email": "",
+  "password": "",
+
+  "timezone": "Europe/Madrid",
+  "opens": { "weekday": "sunday", "time": "12:00" },
+
+  "targets": [
+    { "weekday": "monday",    "time": "07:00", "class": "Wod" },
+    { "weekday": "wednesday", "time": "07:00", "class": "Wod" },
+    { "weekday": "friday",    "time": "07:00", "class": "Wod" }
+  ],
+
+  "waitlist": true,
+  "trustDevice": false,
+
+  "chromePath": "",
+  "headless": true,
+  "diagnosticsDir": "./diagnostics"
+}
