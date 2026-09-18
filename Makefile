@@ -1,8 +1,11 @@
-.PHONY: build test lint clean generate
+.PHONY: build build-wodbook test lint clean generate
 
 # Variables
 BINARY_NAME=bot
 MAIN_PATH=./cmd/bot
+WODBOOK_NAME=wodbook
+WODBOOK_PATH=./cmd/wodbook
+WODBOOK_CONFIG?=config.json
 BUILD_DIR=build
 
 
@@ -13,8 +16,14 @@ generate: ## Generate all the mocks and the code for the bot
 build: generate create-build-dir ## Build the bot
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
 
+build-wodbook: create-build-dir ## Build the wodbook CLI (no mocks needed)
+	go build -o $(BUILD_DIR)/$(WODBOOK_NAME) $(WODBOOK_PATH)
+
 run: generate ## Run the bot
 	go run $(MAIN_PATH) -env=.env
+
+rehearse: build-wodbook ## Full dry run of wodbook: resolves everything, books nothing
+	$(BUILD_DIR)/$(WODBOOK_NAME) -config $(WODBOOK_CONFIG) -now -dry -v
 
 create-build-dir: ## Create the build directory
 	mkdir -p $(BUILD_DIR)

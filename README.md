@@ -48,14 +48,30 @@ graph TB
 ### Package Structure
 
 ```
+pkg/
+└── wodbuster/              # Standalone WodBuster client — see pkg/wodbuster/README.md
+    ├── browserauth/        # Login via headless Chrome (chromedp)
+    ├── race/               # Waiting and polling policy
+    └── wodbustertest/      # A fake WodBuster, for tests that cannot wait a week
+
+cmd/
+├── bot/                    # The Telegram bot
+└── wodbook/                # The CLI that proves the library books
+
 internal/
 ├── app/                    # Application orchestration
 ├── models/                 # Domain models (User, BookingAttempt, etc.)
 ├── telegram/               # Telegram bot interface
 │   └── usecase/           # Business logic (Manager, SessionManager, BookingScheduler)
 ├── storage/               # Storage implementations (MongoDB, Memory)
-└── wodbuster/             # Simple chromedp client wrapper
+└── wodbuster/             # Simple chromedp client wrapper (being replaced by pkg/wodbuster)
 ```
+
+`pkg/wodbuster` is new and not yet wired into the bot. It exists because talking
+to WodBuster and winning the rush when a week is published is a different kind
+of problem from cron, Mongo and Telegram conversations — and only the first one
+needs a Sunday to verify. `cmd/wodbook` exercises it end to end with nothing but
+a binary and a terminal.
 
 ## 🚀 **Quick Start**
 
@@ -164,6 +180,53 @@ Bot: 📊 Your Status
      • Monday 10:00 - wod
 ```
 
+## 🏃 **`wodbook`: booking from the command line**
+
+A standalone binary that books the moment a week is published, with no Telegram
+and no database. Run it a few minutes before the opening; it authenticates,
+synchronises with the server's clock, waits, and books.
+
+```bash
+make build-wodbook
+cp cmd/wodbook/config.example.json config.json   # box, targets, timezone
+export WODBUSTER_EMAIL=you@example.com           # the environment wins over
+export WODBUSTER_PASSWORD='...'                  # the file, so nothing is committed
+
+./build/wodbook -config config.json              # wait for the opening, then book
+```
+
+### Trying it now, without booking anything
+
+```bash
+make rehearse                                    # = -now -dry -v
+```
+
+`-dry` does everything except send the booking request. `-now` skips the wait
+for the opening. Together they are a full dress rehearsal that can be run on any
+day of the week: a real login, the real published schedule, the real class ids
+resolved — and then it stops one request short of taking a place.
+
+Keeping them as two flags is deliberate. `-now` alone answers "can it book?",
+`-dry` alone answers "can it wait?". Those are different bugs, and finding out
+about both at noon on a Sunday costs a week.
+
+One catch worth knowing before the output confuses you: targets are written as a
+recurring weekday and resolved to the **next** date that falls on it, so a
+rehearsal must name a day the box has already published. Rehearsing on a Friday,
+`saturday` works and `monday` does not — Monday belongs to the week that opens on
+Sunday, so the run polls, never sees it, and exits with `race: day never
+published`. That is correct behaviour, not a failure of the rehearsal.
+
+> **The two halves of this repo disagree about the opening day.** The bot's cron
+> is `55 11 * * 6` — Saturday 11:55 (`internal/telegram/usecase/scheduler.go:52`)
+> — while `wodbook` defaults to Sunday 12:00, following the design doc. One of
+> them is wrong about the real box, and whichever it is fires on a day when
+> nothing publishes. Set `opens` in the config to whatever your box actually
+> does, and see `todo.md`.
+
+Full detail, including the exit codes and what a rehearsal still does not prove:
+[`pkg/wodbuster/README.md`](pkg/wodbuster/README.md).
+
 ## ⏰ **How the Saturday Booking Works**
 
 1. **11:55 AM**: Bot starts up and prepares all user sessions
@@ -183,6 +246,20 @@ make test
 ```bash
 make test-integration
 ```
+
+### The client library
+
+`pkg/wodbuster` has no Mongo and no Telegram in it, so its tests need nothing
+installed and no Sunday:
+
+```bash
+go test -race ./pkg/... ./cmd/wodbook/...
+```
+
+They run against `wodbustertest`, a fake WodBuster that speaks the real
+protocol and can be told to publish late, run out of places, reject a booking or
+expire a session — including the case that matters most and that no real Sunday
+reproduces on demand: losing the race.
 
 ## 📊 **Database Schema**
 

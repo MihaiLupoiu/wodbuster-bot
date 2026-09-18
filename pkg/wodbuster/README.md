@@ -84,6 +84,87 @@ go test ./pkg/...
 go test -race ./pkg/...
 ```
 
+## Rehearsing against the real site, without booking
+
+`cmd/wodbook` is the CLI. Two of its flags — `-dry` and `-now` — exist so that
+the six days a week when nothing publishes are not wasted:
+
+| Flag | What it changes |
+|---|---|
+| `-dry` | does everything except send the booking request |
+| `-now` | skips the wait for the opening and acts immediately |
+| `-v` | debug logging: every poll, every rejection |
+| `-config` | path to the config file (default `config.json`) |
+
+`-now -dry` together are the full dress rehearsal: log in with Chrome,
+synchronise with the server's clock, read the real published week, resolve the
+real class ids, print what it would have booked, and stop one request short.
+
+```bash
+make rehearse                              # -now -dry -v, using ./config.json
+make rehearse WODBOOK_CONFIG=mine.json
+
+# or directly
+make build-wodbook
+WODBUSTER_EMAIL=you@example.com WODBUSTER_PASSWORD='...' \
+  ./build/wodbook -config config.json -now -dry -v
+```
+
+It is a real login against the real site: it needs working credentials and a
+Chrome or Chromium on the machine. Nothing is written, nothing is cancelled and
+no place is taken — the only call that would change anything is the one `-dry`
+skips.
+
+Separating the two flags is the point. `-now` alone answers "can it book?" and
+`-dry` alone answers "can it wait?", which are different bugs, and discovering
+them together at noon on a Sunday is how you lose a week.
+
+### Pick a target that is already published
+
+The one thing that makes a mid-week rehearsal *look* broken. Targets are written
+as a recurring weekday, and the run resolves each one to the **next** date
+falling on that weekday. Ask for a day the box has not published yet and the
+rehearsal does exactly what it is supposed to: polls for `giveUpAfterMs`, never
+sees the day, and exits 1 with `race: day never published`.
+
+So for a rehearsal, name a weekday that still falls inside the week already out.
+If the box publishes on Sunday at 12:00, that is any day from tomorrow up to the
+coming Sunday:
+
+```jsonc
+// rehearsing on a Friday: Saturday and Sunday are published, Monday is not
+"targets": [{ "weekday": "saturday", "time": "10:00", "class": "Wod" }],
+"giveUpAfterMs": 5000   // fail fast; the 90s default is for the real race
+```
+
+What a good rehearsal prints:
+
+```
+level=INFO msg="dry run: nothing will be booked"
+level=INFO msg="logged in" box=firespain took=7.4s
+level=INFO msg="clock synced" offset=-612ms
+level=INFO msg=target class="Saturday 2026-09-19 10:00 Wod" waitlist=true
+level=INFO msg=chasing
+level=INFO msg="class resolved" goal="Saturday 2026-09-19 10:00 Wod" id=36125 free=4 capacity=12 state=bookable
+level=INFO msg=done class="Saturday 2026-09-19 10:00 Wod" outcome=dry-run id=36125 free=4
+```
+
+`class resolved` is the line that matters: it means the login worked, the clock
+is synced, the day parsed and the `(time, name)` pair matched a real class id.
+Everything after it is the single request `-dry` is holding back.
+
+Exit codes: `0` everything worked, `1` at least one target failed, `2` bad
+config, `3` login failed.
+
+### What a rehearsal still does not prove
+
+- **The booking response.** No real `Calendario_Inscribir` reply has been seen,
+  so the rejection strings in `classify` remain a guess (below).
+- **The countdown.** `-now` skips the wait, so it never exercises
+  `SegundosHastaPublicacion` being positive.
+- **Losing.** A rehearsal never races anyone. That path is covered against
+  `wodbustertest`, not against the real site.
+
 ## Not verified yet
 
 The error strings in `classify` (errors.go) were **inferred from the site's
