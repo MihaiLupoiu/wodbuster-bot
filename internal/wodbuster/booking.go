@@ -97,7 +97,7 @@ func acceptConfirmation() []chromedp.Action {
 		chromedp.WaitVisible(xpath),
 		// Click the "Aceptar" button
 		chromedp.Click(xpath),
-		chromedp.Sleep(100 * time.Millisecond),
+		chromedp.Sleep(200 * time.Millisecond),
 	}
 }
 

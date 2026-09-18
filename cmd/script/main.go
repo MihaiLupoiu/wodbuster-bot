@@ -1,10 +1,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"log/slog"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"time"
@@ -29,6 +29,48 @@ func main() {
 	user := os.Getenv("TEST_EMAIL")
 	pass := os.Getenv("TEST_PASSWORD")
 
+	// err := testSecuencial(user, pass, testBaseURL)
+	// if err != nil {
+	// 	log.Fatalf("Failed to test secuencial: %v", err)
+	// }
+
+	err := testParallelv2(user, pass, testBaseURL)
+	if err != nil {
+		log.Fatalf("Failed to test parallel: %v", err)
+	}
+
+	// ===============================
+
+	// cookie, err := client.LogIn(context.Background(), user, pass)
+	// if err != nil {
+	// 	log.Fatalf("Failed to login: %v", err)
+	// }
+	// fmt.Println(cookie)
+
+	// TEST 1: Book a class on Wednesday at 20:30
+	// go func() {
+	// 	client, err := wodbuster.NewClient(testBaseURL, wodbuster.WithHeadlessMode(false))
+	// 	if err != nil {
+	// 		log.Fatalf("Failed to create client: %v", err)
+	// 	}
+
+	// 	defer client.Close()
+
+	// 	err = client.BookClass(context.Background(), user, pass, "X", "Wod", "20:30")
+	// 	if err != nil {
+	// 		log.Fatalf("Failed to book class: %v", err)
+	// 	}
+	// }()
+
+	// testParallel(user, pass, testBaseURL)
+	// if err != nil {
+	// 	log.Fatalf("Failed to test parallel: %v", err)
+	// }
+
+	time.Sleep(30 * time.Minute)
+}
+
+func testSecuencial(user, pass, testBaseURL string) error {
 	client, err := wodbuster.NewClient(testBaseURL, wodbuster.WithHeadlessMode(false))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
@@ -56,6 +98,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to book class: %v", err)
 	}
+	time.Sleep(1 * time.Second)
 
 	// ===============================
 	classes, err = client.GetAvailableClassesOnly("X")
@@ -68,6 +111,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to book class: %v", err)
 	}
+
+	time.Sleep(1 * time.Second)
 
 	// ===============================
 
@@ -85,76 +130,117 @@ func main() {
 	// ===============================
 
 	time.Sleep(60 * time.Minute)
-
-	os.Exit(0)
-
-	// ===============================
-
-	// cookie, err := client.LogIn(context.Background(), user, pass)
-	// if err != nil {
-	// 	log.Fatalf("Failed to login: %v", err)
-	// }
-	// fmt.Println(cookie)
-
-	// TEST 1: Book a class on Wednesday at 20:30
-	// go func() {
-	// 	client, err := wodbuster.NewClient(testBaseURL, wodbuster.WithHeadlessMode(false))
-	// 	if err != nil {
-	// 		log.Fatalf("Failed to create client: %v", err)
-	// 	}
-
-	// 	defer client.Close()
-
-	// 	err = client.BookClass(context.Background(), user, pass, "X", "Wod", "20:30")
-	// 	if err != nil {
-	// 		log.Fatalf("Failed to book class: %v", err)
-	// 	}
-	// }()
-
-	// TEST 2: Book a class on Monday at 07:00
-	go func() {
-		client, err := wodbuster.NewClient(testBaseURL, wodbuster.WithHeadlessMode(false))
-		if err != nil {
-			log.Fatalf("Failed to create client: %v", err)
-		}
-
-		defer client.Close()
-
-		err = client.BookClass(context.Background(), user, pass, "L", "Wod", "07:00")
-		if err != nil {
-			log.Fatalf("Failed to book class: %v", err)
-		}
-	}()
-
-	// TEST 3: Book a class on Wednesday at 07:00
-	go func() {
-		client, err := wodbuster.NewClient(testBaseURL, wodbuster.WithHeadlessMode(false))
-		if err != nil {
-			log.Fatalf("Failed to create client: %v", err)
-		}
-
-		defer client.Close()
-
-		err = client.BookClass(context.Background(), user, pass, "X", "Wod", "07:00")
-		if err != nil {
-			log.Fatalf("Failed to book class: %v", err)
-		}
-	}()
-
-	// TEST 4: Book a class on Friday at 07:00
-	go func() {
-		client, err := wodbuster.NewClient(testBaseURL, wodbuster.WithHeadlessMode(false))
-		if err != nil {
-			log.Fatalf("Failed to create client: %v", err)
-		}
-
-		defer client.Close()
-
-		err = client.BookClass(context.Background(), user, pass, "V", "Wod", "07:00")
-		if err != nil {
-			log.Fatalf("Failed to book class: %v", err)
-		}
-	}()
-
-	time.Sleep(30 * time.Minute)
+	return nil
 }
+
+func testParallelv2(user, pass, testBaseURL string) error {
+	go func() {
+		err := bookClass(user, pass, testBaseURL, "L", "Wod", "07:00")
+		if err != nil {
+			log.Fatalf("Failed to book class: %v", err)
+		}
+	}()
+
+	go func() {
+		err := bookClass(user, pass, testBaseURL, "X", "Wod", "07:00")
+		if err != nil {
+			log.Fatalf("Failed to book class: %v", err)
+		}
+	}()
+
+	go func() {
+		err := bookClass(user, pass, testBaseURL, "V", "Wod", "07:00")
+		if err != nil {
+			log.Fatalf("Failed to book class: %v", err)
+		}
+	}()
+
+	time.Sleep(60 * time.Minute)
+	return nil
+}
+
+func bookClass(user, pass, testBaseURL, day, classType, hour string) error {
+	client, err := wodbuster.NewClient(testBaseURL, wodbuster.WithHeadlessMode(false))
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+
+	defer client.Close()
+
+	err = client.LoginOnly(user, pass)
+	if err != nil {
+		log.Fatalf("Failed to login: %v", err)
+	}
+
+	err = client.NotRememberBrowser()
+	if err != nil {
+		log.Fatalf("Failed to not remember browser: %v", err)
+	}
+
+	classes, err := client.GetAvailableClassesOnly(day)
+	if err != nil {
+		log.Fatalf("Failed to get available classes: %v", err)
+	}
+	fmt.Println(classes)
+
+	time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
+
+	err = client.BookClassOnly(day, classType, hour)
+	if err != nil {
+		log.Fatalf("Failed to book class: %v", err)
+	}
+
+	time.Sleep(1 * time.Second)
+	return err
+}
+
+// func testParallel(user, pass, testBaseURL string) error {
+
+// 	// TEST 2: Book a class on Monday at 07:00
+// 	go func() {
+// 		client, err := wodbuster.NewClient(testBaseURL, wodbuster.WithHeadlessMode(false))
+// 		if err != nil {
+// 			log.Fatalf("Failed to create client: %v", err)
+// 		}
+
+// 		defer client.Close()
+
+// 		err = client.BookClass(context.Background(), user, pass, "L", "Wod", "07:00")
+// 		if err != nil {
+// 			log.Fatalf("Failed to book class: %v", err)
+// 		}
+// 	}()
+
+// 	// TEST 3: Book a class on Wednesday at 07:00
+// 	go func() {
+// 		client, err := wodbuster.NewClient(testBaseURL, wodbuster.WithHeadlessMode(false))
+// 		if err != nil {
+// 			log.Fatalf("Failed to create client: %v", err)
+// 		}
+
+// 		defer client.Close()
+
+// 		err = client.BookClass(context.Background(), user, pass, "X", "Wod", "07:00")
+// 		if err != nil {
+// 			log.Fatalf("Failed to book class: %v", err)
+// 		}
+// 	}()
+
+// 	// TEST 4: Book a class on Friday at 07:00
+// 	go func() {
+// 		client, err := wodbuster.NewClient(testBaseURL, wodbuster.WithHeadlessMode(false))
+// 		if err != nil {
+// 			log.Fatalf("Failed to create client: %v", err)
+// 		}
+
+// 		defer client.Close()
+
+// 		err = client.BookClass(context.Background(), user, pass, "V", "Wod", "07:00")
+// 		if err != nil {
+// 			log.Fatalf("Failed to book class: %v", err)
+// 		}
+// 	}()
+
+// 	time.Sleep(60 * time.Minute)
+// 	return nil
+// }
