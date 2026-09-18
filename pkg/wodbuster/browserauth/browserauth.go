@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/storage"
 	"github.com/chromedp/chromedp"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
@@ -401,19 +402,31 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 		return zero, fmt.Errorf("browserauth: could not find the athlete id on the booking page")
 	}
 
+	// Storage.getCookies, not Network.getCookies: the latter returns only what
+	// the current page can see, which on the box subdomain leaves behind the
+	// host-only cookies the login set on wodbuster.com itself.
 	var jar []*network.Cookie
 	if err := chromedp.Run(runCtx, chromedp.ActionFunc(func(ctx context.Context) error {
 		var err error
-		jar, err = network.GetCookies().Do(ctx)
+		jar, err = storage.GetCookies().Do(ctx)
 		return err
 	})); err != nil {
 		return zero, fmt.Errorf("browserauth: could not read the session cookies: %w", err)
 	}
 
+	kept := toHTTPCookies(jar, box)
+	if a.log.Enabled(runCtx, slog.LevelDebug) {
+		names := make([]string, 0, len(kept))
+		for _, c := range kept {
+			names = append(names, c.Name)
+		}
+		a.log.Debug("session cookies", "in_jar", len(jar), "kept", names)
+	}
+
 	sess := wodbuster.Session{
 		Box:       box,
 		AthleteID: m[1],
-		Cookies:   toHTTPCookies(jar, box),
+		Cookies:   kept,
 		IssuedAt:  time.Now(),
 	}
 	if err := sess.Valid(); err != nil {
