@@ -123,9 +123,6 @@ func ParseTimeOfDay(s string) (TimeOfDay, error) {
 
 func (t TimeOfDay) String() string { return fmt.Sprintf("%02d:%02d", t.Hour, t.Minute) }
 
-// api is the HH:MM:SS form WodBuster uses in its JSON.
-func (t TimeOfDay) api() string { return fmt.Sprintf("%02d:%02d:00", t.Hour, t.Minute) }
-
 func (t TimeOfDay) MarshalText() ([]byte, error) { return []byte(t.String()), nil }
 
 func (t *TimeOfDay) UnmarshalText(b []byte) error {

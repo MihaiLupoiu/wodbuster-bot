@@ -47,6 +47,12 @@ type Request struct {
 	Ticks   int64
 	Idu     string
 	At      time.Time
+
+	// UserAgent and Cookies are what the client actually put on the wire.
+	// Identity travels in the cookies, so a test that cares which athlete a
+	// booking was made for has to look here.
+	UserAgent string
+	Cookies   []*http.Cookie
 }
 
 // Server is a fake WodBuster. Safe for concurrent use: the client under test
@@ -220,6 +226,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.requests = append(s.requests, Request{
 		Handler: handler, ClassID: id, Ticks: ticks, Idu: q.Get("idu"), At: time.Now(),
+		UserAgent: r.Header.Get("User-Agent"), Cookies: r.Cookies(),
 	})
 	s.mu.Unlock()
 

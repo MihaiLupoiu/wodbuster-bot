@@ -3,6 +3,7 @@ package wodbuster_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -271,7 +272,7 @@ func TestServerClockCorrectsDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	drift := clk.Now().Sub(time.Now()) - 42*time.Second
+	drift := time.Until(clk.Now()) - 42*time.Second
 	if drift > 1500*time.Millisecond || drift < -1500*time.Millisecond {
 		t.Errorf("clock off by %v after correction", drift)
 	}
@@ -298,5 +299,87 @@ func TestRedactedHidesCookieValues(t *testing.T) {
 		if c.Value == "1" {
 			t.Error("Redacted still contains the cookie value")
 		}
+	}
+}
+
+// Two athletes, one transport. Sharing the transport is the whole point of
+// WithHTTPClient — sharing a cookie jar would put both sessions in the same
+// request, and the server would book for whichever it recognised last.
+func TestClientsDoNotShareACookieJar(t *testing.T) {
+	srv := wodbustertest.New(t)
+	srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00"})
+	shared := srv.HTTPClient()
+
+	build := func(who string) *wodbuster.Client {
+		t.Helper()
+		s := srv.Session()
+		s.AthleteID = who
+		s.Cookies = []*http.Cookie{{Name: "wb-session", Value: who, Path: "/"}}
+		c, err := wodbuster.NewClient(s, wodbuster.WithHTTPClient(shared))
+		if err != nil {
+			t.Fatalf("NewClient(%s): %v", who, err)
+		}
+		return c
+	}
+
+	alice, bob := build("alice"), build("bob")
+	day := wodbuster.NewDate(2026, time.August, 24)
+	if _, err := alice.Schedule(context.Background(), day); err != nil {
+		t.Fatalf("alice: %v", err)
+	}
+	if _, err := bob.Schedule(context.Background(), day); err != nil {
+		t.Fatalf("bob: %v", err)
+	}
+
+	reqs := srv.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("want 2 requests, got %d", len(reqs))
+	}
+	for i, want := range []string{"alice", "bob"} {
+		if got := len(reqs[i].Cookies); got != 1 {
+			t.Fatalf("%s carried %d cookies, want exactly its own", want, got)
+		}
+		if got := reqs[i].Cookies[0].Value; got != want {
+			t.Errorf("%s's request carried the session of %q", want, got)
+		}
+	}
+}
+
+// The caller's http.Client must come back unchanged: it is theirs, it is very
+// likely shared, and a jar installed behind their back would outlive this test.
+func TestNewClientDoesNotMutateTheCallersHTTPClient(t *testing.T) {
+	srv := wodbustertest.New(t)
+	caller := srv.HTTPClient()
+	if _, err := wodbuster.NewClient(srv.Session(), wodbuster.WithHTTPClient(caller)); err != nil {
+		t.Fatal(err)
+	}
+	if caller.Jar != nil {
+		t.Error("NewClient installed a cookie jar on the caller's http.Client")
+	}
+}
+
+func TestUserAgent(t *testing.T) {
+	const custom = "wodbook/1.2.3"
+	srv := wodbustertest.New(t)
+	srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00"})
+	day := wodbuster.NewDate(2026, time.August, 24)
+
+	c, err := wodbuster.NewClient(srv.Session(),
+		wodbuster.WithHTTPClient(srv.HTTPClient()), wodbuster.WithUserAgent(custom))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Schedule(context.Background(), day); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.Requests()[0].UserAgent; got != custom {
+		t.Errorf("User-Agent = %q, want %q", got, custom)
+	}
+
+	if _, err := newClient(t, srv).Schedule(context.Background(), day); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.Requests()[1].UserAgent; got == "" || got == custom {
+		t.Errorf("default User-Agent = %q, want the library's own", got)
 	}
 }

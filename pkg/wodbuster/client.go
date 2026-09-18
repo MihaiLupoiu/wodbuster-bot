@@ -20,10 +20,11 @@ import (
 // the race subpackage). A *Client is safe for concurrent use and cheap to
 // build, so one per athlete is the intended shape.
 type Client struct {
-	http    *http.Client
-	base    string
-	session Session
-	log     *slog.Logger
+	http      *http.Client
+	base      string
+	session   Session
+	userAgent string
+	log       *slog.Logger
 }
 
 type config struct {
@@ -61,9 +62,15 @@ func NewClient(s Session, opts ...Option) (*Client, error) {
 		o(&cf)
 	}
 
-	hc := cf.httpClient
-	if hc == nil {
-		hc = &http.Client{
+	// The caller's http.Client is copied, never mutated, and the copy always
+	// gets a jar of its own. Sharing one transport across athletes is the point
+	// of WithHTTPClient — sharing a cookie jar would put two athletes' sessions
+	// in the same request and book for whichever one the server saw last.
+	var hc http.Client
+	if cf.httpClient != nil {
+		hc = *cf.httpClient
+	} else {
+		hc = http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
 				MaxIdleConnsPerHost: 4,
@@ -72,24 +79,23 @@ func NewClient(s Session, opts ...Option) (*Client, error) {
 			},
 		}
 	}
-	if hc.Jar == nil {
-		jar, err := cookiejar.New(nil)
-		if err != nil {
-			return nil, err
-		}
-		hc.Jar = jar
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, err
 	}
-	hc.Jar.SetCookies(base, s.Cookies)
+	hc.Jar = jar
+	jar.SetCookies(base, s.Cookies)
 	// The login happens on the parent domain; carry the cookies there too.
 	if parent, err := url.Parse("https://wodbuster.com"); err == nil {
-		hc.Jar.SetCookies(parent, s.Cookies)
+		jar.SetCookies(parent, s.Cookies)
 	}
 
 	return &Client{
-		http:    hc,
-		base:    s.BaseURL(),
-		session: s,
-		log:     cf.log,
+		http:      &hc,
+		base:      s.BaseURL(),
+		session:   s,
+		userAgent: cf.userAgent,
+		log:       cf.log,
 	}, nil
 }
 
@@ -107,7 +113,7 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, *http.Response, 
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
 	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("User-Agent", defaultUserAgent)
+	req.Header.Set("User-Agent", c.userAgent)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
