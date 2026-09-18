@@ -2,10 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
 )
@@ -69,6 +73,43 @@ func parseWeekday(s string) (time.Weekday, error) {
 	return wd, nil
 }
 
+// defaultEnvFile is read when -env is not given, and only if it happens to be
+// there: the other binaries in this repo keep credentials in a .env, and making
+// the CLI ignore it would be a trap.
+const defaultEnvFile = ".env"
+
+// loadDotEnv copies an env file into the process environment.
+//
+// An exported variable wins — the file is a convenience for a laptop, and a
+// real environment variable is what a deployment sets. An exported *empty*
+// variable does not win, which is why this does not use godotenv.Load: that
+// treats "set to nothing" as set, so a stray `export WODBUSTER_EMAIL=` would
+// silently shadow the file and look exactly like a rejected password. Empty
+// means absent here, the same as everywhere else in this config.
+//
+// A path the caller asked for by name must exist; the default one need not.
+func loadDotEnv(path string, explicit bool) error {
+	if path == "" {
+		return nil
+	}
+	vars, err := godotenv.Read(path)
+	if err != nil {
+		if !explicit && errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("%s is not a readable env file: %w", path, err)
+	}
+	for k, v := range vars {
+		if os.Getenv(k) != "" {
+			continue
+		}
+		if err := os.Setenv(k, v); err != nil {
+			return fmt.Errorf("setting %s from %s: %w", k, path, err)
+		}
+	}
+	return nil
+}
+
 func loadConfig(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -118,7 +159,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf(`"box" is required (your centre's subdomain, e.g. "firespain")`)
 	}
 	if c.Email == "" || c.Password == "" {
-		return fmt.Errorf("missing credentials: set them in the config or in WODBUSTER_EMAIL / WODBUSTER_PASSWORD")
+		return fmt.Errorf("missing credentials: set WODBUSTER_EMAIL and WODBUSTER_PASSWORD " +
+			"in the environment, in the file given to -env, or in the config file")
 	}
 	if len(c.Targets) == 0 {
 		return fmt.Errorf(`"targets" is empty: nothing to book`)

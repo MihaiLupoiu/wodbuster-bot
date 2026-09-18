@@ -95,6 +95,7 @@ the six days a week when nothing publishes are not wasted:
 | `-now` | skips the wait for the opening and acts immediately |
 | `-v` | debug logging: every poll, every rejection |
 | `-config` | path to the config file (default `config.json`) |
+| `-env` | env file holding the credentials (default `.env`, skipped if absent) |
 
 `-now -dry` together are the full dress rehearsal: log in with Chrome,
 synchronise with the server's clock, read the real published week, resolve the
@@ -106,9 +107,21 @@ make rehearse WODBOOK_CONFIG=mine.json
 
 # or directly
 make build-wodbook
-WODBUSTER_EMAIL=you@example.com WODBUSTER_PASSWORD='...' \
-  ./build/wodbook -config config.json -now -dry -v
+./build/wodbook -config config.json -now -dry -v
 ```
+
+Credentials come from `WODBUSTER_EMAIL` and `WODBUSTER_PASSWORD`. A `./.env` is
+read when it is there, `-env other.env` names a different one, and an exported
+variable beats both — so nothing has to be written into `config.json`:
+
+```env
+WODBUSTER_EMAIL=you@example.com
+WODBUSTER_PASSWORD=...
+```
+
+A file named with `-env` must exist: being told to read a file and silently not
+doing it produces a "missing credentials" error that looks like a wrong
+password. The default `.env` is allowed to be absent.
 
 It is a real login against the real site: it needs working credentials and a
 Chrome or Chromium on the machine. Nothing is written, nothing is cancelled and

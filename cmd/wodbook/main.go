@@ -8,6 +8,10 @@
 //	wodbook -config config.json -now       # skip the wait, act immediately
 //	wodbook -config config.json -now -dry  # full dress rehearsal, any day
 //
+// Credentials are read from WODBUSTER_EMAIL and WODBUSTER_PASSWORD, which an
+// env file can supply: ./.env is picked up when it exists, and -env names a
+// different one. An exported variable beats the file, and both beat the config.
+//
 // Exit codes: 0 all good, 1 something failed, 2 bad config, 3 login failed.
 //
 // This binary is the library's proving ground. If it books, the library is
@@ -44,6 +48,7 @@ const (
 func main() {
 	var (
 		configPath  = flag.String("config", "config.json", "path to the configuration file")
+		envPath     = flag.String("env", defaultEnvFile, "path to an env file holding WODBUSTER_EMAIL / WODBUSTER_PASSWORD")
 		dryRun      = flag.Bool("dry", false, "resolve everything but do not book")
 		now         = flag.Bool("now", false, "do not wait for the opening, act immediately")
 		verbose     = flag.Bool("v", false, "debug logging")
@@ -54,6 +59,18 @@ func main() {
 	if *showVersion {
 		fmt.Println("wodbook", version)
 		return
+	}
+
+	// Before the config, so that what it reads from the environment is there.
+	explicitEnv := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "env" {
+			explicitEnv = true
+		}
+	})
+	if err := loadDotEnv(*envPath, explicitEnv); err != nil {
+		fmt.Fprintln(os.Stderr, "could not read the env file:", err)
+		os.Exit(exitBadConf)
 	}
 
 	cfg, err := loadConfig(*configPath)

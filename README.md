@@ -189,11 +189,22 @@ synchronises with the server's clock, waits, and books.
 ```bash
 make build-wodbook
 cp cmd/wodbook/config.example.json config.json   # box, targets, timezone
-export WODBUSTER_EMAIL=you@example.com           # the environment wins over
-export WODBUSTER_PASSWORD='...'                  # the file, so nothing is committed
+
+# credentials go in the environment, never in config.json
+cat >> .env <<'ENV'
+WODBUSTER_EMAIL=you@example.com
+WODBUSTER_PASSWORD=...
+ENV
 
 ./build/wodbook -config config.json              # wait for the opening, then book
 ```
+
+The config file holds *what* to book — a list of targets, which is a shape that
+does not fit in environment variables. Credentials are separate: `./.env` is
+picked up automatically, `-env other.env` names a different file, and an
+exported variable beats both. Note the names are `WODBUSTER_EMAIL` and
+`WODBUSTER_PASSWORD`; the older `cmd/script` reads `TEST_EMAIL` / `TEST_PASSWORD`
+from the same file, so you may need both pairs for now.
 
 ### Trying it now, without booking anything
 

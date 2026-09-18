@@ -165,3 +165,82 @@ func TestTargetsResolveToTheComingWeek(t *testing.T) {
 	assert.Equal(t, wodbuster.NewDate(2026, time.September, 21), got,
 		"booking on Sunday morning targets the Monday of the week about to publish")
 }
+
+// The other binaries in this repo keep credentials in a .env; the CLI reads one
+// too, so that "it is right there in the file" is not a trap.
+func TestLoadDotEnv(t *testing.T) {
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), ".env")
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		return path
+	}
+
+	t.Run("fills the environment", func(t *testing.T) {
+		t.Setenv("WODBUSTER_EMAIL", "")
+		path := write(t, "WODBUSTER_EMAIL=from-file@example.com\nWODBUSTER_PASSWORD=file-secret\n")
+		require.NoError(t, loadDotEnv(path, true))
+		assert.Equal(t, "from-file@example.com", os.Getenv("WODBUSTER_EMAIL"))
+		assert.Equal(t, "file-secret", os.Getenv("WODBUSTER_PASSWORD"))
+	})
+
+	// A deployment sets real variables; a file on disk must not quietly win.
+	t.Run("an exported variable beats the file", func(t *testing.T) {
+		t.Setenv("WODBUSTER_PASSWORD", "exported-secret")
+		path := write(t, "WODBUSTER_PASSWORD=file-secret\n")
+		require.NoError(t, loadDotEnv(path, true))
+		assert.Equal(t, "exported-secret", os.Getenv("WODBUSTER_PASSWORD"))
+	})
+
+	t.Run("the default path may be absent", func(t *testing.T) {
+		assert.NoError(t, loadDotEnv(filepath.Join(t.TempDir(), ".env"), false))
+	})
+
+	// Asking for a file by name and being ignored is the failure mode worth
+	// avoiding: it looks exactly like credentials that did not work.
+	t.Run("a named path must exist", func(t *testing.T) {
+		assert.Error(t, loadDotEnv(filepath.Join(t.TempDir(), "nope.env"), true))
+	})
+
+	t.Run("no path at all is fine", func(t *testing.T) {
+		assert.NoError(t, loadDotEnv("", false))
+		assert.NoError(t, loadDotEnv("", true))
+	})
+}
+
+// -env is what makes the file reach the config, so check the whole path.
+func TestCredentialsReachTheConfigFromAnEnvFile(t *testing.T) {
+	t.Setenv("WODBUSTER_EMAIL", "")
+	t.Setenv("WODBUSTER_PASSWORD", "")
+
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	require.NoError(t, os.WriteFile(envPath,
+		[]byte("WODBUSTER_EMAIL=env-file@example.com\nWODBUSTER_PASSWORD=env-file-secret\n"), 0o600))
+
+	cfgPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`{
+      "box": "firespain",
+      "targets": [{"weekday": "monday", "time": "07:00", "class": "Wod"}]
+    }`), 0o600))
+
+	_, err := loadConfig(cfgPath)
+	require.Error(t, err, "without the env file there are no credentials")
+
+	require.NoError(t, loadDotEnv(envPath, true))
+	cfg, err := loadConfig(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "env-file@example.com", cfg.Email)
+	assert.Equal(t, "env-file-secret", cfg.Password)
+}
+
+// An exported-but-empty variable is how a shell leaves a name behind. It must
+// not shadow the file: that failure looks identical to a wrong password.
+func TestEmptyExportedVariableDoesNotShadowTheFile(t *testing.T) {
+	t.Setenv("WODBUSTER_EMAIL", "")
+	path := filepath.Join(t.TempDir(), ".env")
+	require.NoError(t, os.WriteFile(path, []byte("WODBUSTER_EMAIL=from-file@example.com\n"), 0o600))
+
+	require.NoError(t, loadDotEnv(path, true))
+	assert.Equal(t, "from-file@example.com", os.Getenv("WODBUSTER_EMAIL"))
+}
