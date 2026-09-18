@@ -33,6 +33,14 @@ import (
 
 const loginURL = "https://wodbuster.com/account/login.aspx"
 
+// headlessUserAgent replaces the one Chrome sends when it has no window, which
+// says "HeadlessChrome" and which Cloudflare — sitting in front of WodBuster —
+// answers with an interstitial the login form never arrives behind. Any
+// ordinary Chrome UA gets through; it is the giveaway string that is the
+// problem, not the automation.
+const headlessUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
+	"AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
 // Known control ids, as of 2026-08. They are tried first and the DOM is
 // searched by shape if they have moved — see jsMarkFields.
 const (
@@ -40,7 +48,15 @@ const (
 	idPassword    = "body_body_CtlLogin_IoPassword"
 	idSubmit      = "body_body_CtlLogin_CtlAceptar"
 	idTrustDevice = "body_body_CtlConfiar_CtlSeguro"
-	idJustOnce    = "body_body_CtlConfiar_CtlNoSeguroConfianza"
+	idJustOnce    = "body_body_CtlConfiar_CtlNoSeguro"
+)
+
+// The "remember this device" choice is a pair of radios that post back on
+// click. Their ids are WebForms-generated, but the value= is the control's own
+// name and has survived the id changing under us once already.
+const (
+	valTrustDevice = "CtlSeguro"
+	valJustOnce    = "CtlNoSeguro"
 )
 
 // Selectors used for typing: jsMarkFields tags the real elements with data-wb
@@ -54,6 +70,51 @@ const (
 // reAthleteID pulls the idu out of the Crossfit.Init(...) call the booking page
 // prints inline. It is the sixth argument.
 var reAthleteID = regexp.MustCompile(`Crossfit\.Init\(\s*(?:[^,]*,\s*){5}'([^']+)'`)
+
+// jsDescribeClickables lists every clickable on the page with its id and
+// trimmed text. When the "remember this device" step changes, this is what
+// tells us the new control names without a round trip to the browser.
+const jsDescribeClickables = `(function(){
+  var els = document.querySelectorAll('a,button,input[type=submit],input[type=button],[onclick],[role=button]');
+  var out = [];
+  for (var i = 0; i < els.length && out.length < 25; i++) {
+    var t = ((els[i].innerText || els[i].textContent || els[i].value || '') + '')
+      .replace(/\s+/g, ' ').trim().slice(0, 80);
+    out.push({tag: els[i].tagName, id: els[i].id || '', text: t});
+  }
+  return out;
+})()`
+
+// jsPickDevice answers the "remember this device" question. It tries the known
+// id, then the radio's value=, then the visible label — three independent ways
+// in, because this step is the one that has already broken once and it breaks
+// after the password is typed, where a failure costs a whole booking window.
+// It reports which route worked so a drift shows up in the logs.
+const jsPickDevice = `(function(id, value, texts){
+  function fire(el, via) {
+    if (!el) return '';
+    el.click();
+    return via;
+  }
+  var byID = document.getElementById(id);
+  if (byID) return fire(byID, 'id');
+
+  var radios = document.querySelectorAll('input[type=radio]');
+  for (var i = 0; i < radios.length; i++) {
+    if (radios[i].value === value) return fire(radios[i], 'value');
+  }
+
+  var labels = document.querySelectorAll('label[for]');
+  for (var i = 0; i < labels.length; i++) {
+    var t = ((labels[i].innerText || labels[i].textContent || '') + '').toLowerCase();
+    for (var j = 0; j < texts.length; j++) {
+      if (t.indexOf(texts[j]) !== -1) {
+        return fire(document.getElementById(labels[i].htmlFor), 'label');
+      }
+    }
+  }
+  return '';
+})(%q, %q, %s)`
 
 // jsMarkFields locates the three login controls and tags them.
 //
@@ -96,14 +157,6 @@ const jsMarkFields = `(function(){
   return out;
 })()`
 
-// jsClickByID clicks an element by id, reporting whether it existed.
-const jsClickByID = `(function(id){
-  var e = document.getElementById(id);
-  if (!e) return false;
-  e.click();
-  return true;
-})(%q)`
-
 // jsClickByText clicks the first clickable element whose text contains one of
 // the given lowercase strings.
 const jsClickByText = `(function(texts){
@@ -135,6 +188,7 @@ type Authenticator struct {
 	headless       bool
 	trustDevice    bool
 	diagnosticsDir string
+	userAgent      string
 	timeout        time.Duration
 	log            *slog.Logger
 }
@@ -157,15 +211,26 @@ func WithTrustDevice(v bool) Option { return func(a *Authenticator) { a.trustDev
 // in that directory. Passwords are stripped from the HTML.
 func WithDiagnosticsDir(d string) Option { return func(a *Authenticator) { a.diagnosticsDir = d } }
 
+// WithUserAgent overrides the User-Agent used in headless mode. The default
+// already passes Cloudflare; set this only if that stops being true.
+func WithUserAgent(ua string) Option {
+	return func(a *Authenticator) {
+		if ua != "" {
+			a.userAgent = ua
+		}
+	}
+}
+
 func WithTimeout(d time.Duration) Option { return func(a *Authenticator) { a.timeout = d } }
 
 func WithLogger(l *slog.Logger) Option { return func(a *Authenticator) { a.log = l } }
 
 func New(opts ...Option) *Authenticator {
 	a := &Authenticator{
-		headless: true,
-		timeout:  90 * time.Second,
-		log:      slog.New(slog.NewTextHandler(io_discard{}, &slog.HandlerOptions{Level: slog.LevelError + 1})),
+		headless:  true,
+		userAgent: headlessUserAgent,
+		timeout:   90 * time.Second,
+		log:       slog.New(slog.NewTextHandler(io_discard{}, &slog.HandlerOptions{Level: slog.LevelError + 1})),
 	}
 	for _, o := range opts {
 		o(a)
@@ -195,6 +260,9 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 		chromedp.Flag("disable-dev-shm-usage", true),
 		chromedp.WindowSize(1280, 900),
 	)
+	if a.headless {
+		opts = append(opts, chromedp.UserAgent(a.userAgent))
+	}
 	if a.chromePath != "" {
 		opts = append(opts, chromedp.ExecPath(a.chromePath))
 	}
@@ -255,12 +323,13 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 		return zero, fmt.Errorf("browserauth: could not submit the login form: %w", err)
 	}
 
-	deviceID, deviceText := idJustOnce, `["no recordar"]`
+	deviceID, deviceValue, deviceText := idJustOnce, valJustOnce, `["no recordar"]`
 	if a.trustDevice {
-		deviceID, deviceText = idTrustDevice, `["recordar este dispositivo"]`
+		deviceID, deviceValue, deviceText = idTrustDevice, valTrustDevice, `["recordar este dispositivo"]`
 	}
 
 	deadline := time.Now().Add(a.timeout / 2)
+	dumpedPrompt := false
 	for {
 		if time.Now().After(deadline) {
 			a.dump(runCtx, "login-stuck")
@@ -282,16 +351,33 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 			return zero, fmt.Errorf("browserauth: WodBuster rejected the credentials")
 		}
 		if strings.Contains(body, "recordar este dispositivo") {
-			var byID bool
-			_ = chromedp.Run(runCtx, chromedp.Evaluate(fmt.Sprintf(jsClickByID, deviceID), &byID))
-			if !byID {
-				var clicked string
-				_ = chromedp.Run(runCtx, chromedp.Evaluate(fmt.Sprintf(jsClickByText, deviceText), &clicked))
-				if clicked != "" {
-					a.log.Warn("device button id is gone; clicked by text instead",
-						"id", deviceID, "text", clicked)
+			var via string
+			_ = chromedp.Run(runCtx, chromedp.Evaluate(
+				fmt.Sprintf(jsPickDevice, deviceID, deviceValue, deviceText), &via))
+			switch via {
+			case "":
+				// None of the three routes found the control. Record what the
+				// page does offer, once: this step has already changed under
+				// us once, and the dump is how we learn what it changed to.
+				a.log.Warn("could not answer the device prompt",
+					"id", deviceID, "value", deviceValue, "text", deviceText)
+				if !dumpedPrompt {
+					dumpedPrompt = true
+					a.dump(runCtx, "device-prompt")
+					var controls []map[string]string
+					if err := chromedp.Run(runCtx,
+						chromedp.Evaluate(jsDescribeClickables, &controls)); err == nil {
+						a.log.Warn("clickables on the device prompt", "controls", controls)
+					}
 				}
+			case "id":
+				a.log.Debug("answered the device prompt", "id", deviceID)
+			default:
+				a.log.Warn("device control id is gone; found it another way",
+					"id", deviceID, "via", via)
 			}
+		} else {
+			a.log.Debug("waiting for the login to land", "url", href)
 		}
 
 		select {
