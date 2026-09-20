@@ -64,12 +64,21 @@ func classify(op, message string) error {
 	switch {
 	case containsAny(m, "completa", "llena", "sin plazas", "no hay plazas"):
 		return fmt.Errorf("%s: %w (%s)", op, ErrClassFull, message)
-	case containsAny(m, "ya estás", "ya estas", "ya inscrito", "ya apuntado"):
+	// "Ya estabas apuntado a esta clase." is what firespain answers to a second
+	// Inscribir; the rest are variants seen or plausible on the same message.
+	case containsAny(m, "ya estás", "ya estas", "ya estabas",
+		"ya inscrito", "ya apuntado", "apuntado a esta clase", "inscrito en esta clase"):
 		return fmt.Errorf("%s: %w (%s)", op, ErrAlreadyBooked, message)
-	case containsAny(m, "tarifa", "no incluye", "no incluida"):
-		return fmt.Errorf("%s: %w (%s)", op, ErrNotIncluded, message)
-	case containsAny(m, "límite", "limite", "máximo", "maximo", "has agotado", "sesiones"):
+	// Quota before plan: the real quota message mentions "tarifa" too — "ya te
+	// has apuntado a todas las clases de tu tarifa y no tienes créditos
+	// suficientes" — and matching "tarifa" first called an exhausted quota a
+	// class outside the plan. They call for opposite reactions: one is "stop
+	// for this week", the other is "this class was never yours to book".
+	case containsAny(m, "límite", "limite", "máximo", "maximo", "has agotado",
+		"sesiones", "todas las clases de tu tarifa", "créditos", "creditos"):
 		return fmt.Errorf("%s: %w (%s)", op, ErrQuotaExceeded, message)
+	case containsAny(m, "no incluye", "no incluida", "no incluido", "no está incluida"):
+		return fmt.Errorf("%s: %w (%s)", op, ErrNotIncluded, message)
 	case containsAny(m, "sesión", "sesion", "inicia sesión", "no autenticado"):
 		return fmt.Errorf("%s: %w (%s)", op, ErrSessionExpired, message)
 	default:

@@ -60,14 +60,36 @@ func (w wireDay) toSchedule(d Date) Schedule {
 	return s
 }
 
+// wireAction is the answer to Inscribir / Avisar / Borrar.
+//
+// The body is the whole refreshed day — the same payload LoadClass returns —
+// and the verdict on what we just asked for sits in one small object under
+// "Res". Reading the verdict at the top level finds nothing, which decodes as
+// a rejection with no message: a booking that worked then reads as a failure.
+// Observed against firespain on 2026-09-20; before that this type was a guess.
 type wireAction struct {
+	Res *wireResult `json:"Res"`
+
+	// Embedded, so a body that ever does carry the verdict at the top level
+	// still parses. Res wins when both are there.
+	wireResult
+}
+
+type wireResult struct {
 	EsCorrecto       bool   `json:"EsCorrecto"`
 	ErrorMsg         string `json:"ErrorMsg"`
 	Error            string `json:"Error"`
-	NeedConfirmAdmin bool   `json:"NeedConfirmAdmin"`
+	NeedAdminConfirm bool   `json:"NeedAdminConfirm"`
 }
 
-func (w wireAction) message() string {
+func (w wireAction) result() wireResult {
+	if w.Res != nil {
+		return *w.Res
+	}
+	return w.wireResult
+}
+
+func (w wireResult) message() string {
 	switch {
 	case w.ErrorMsg != "":
 		return w.ErrorMsg

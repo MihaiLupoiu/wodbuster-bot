@@ -244,7 +244,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "Calendario_Inscribir":
 		s.serveBook(w, id)
 	case "Calendario_Avisar":
-		writeJSON(w, map[string]any{"EsCorrecto": true})
+		writeResult(w, true, "")
 	case "Calendario_Borrar":
 		s.serveCancel(w, id)
 	default:
@@ -306,7 +306,7 @@ func (s *Server) serveBook(w http.ResponseWriter, id int64) {
 	defer s.mu.Unlock()
 
 	if s.rejectBooking != "" {
-		writeJSON(w, map[string]any{"EsCorrecto": false, "ErrorMsg": s.rejectBooking})
+		writeResult(w, false, s.rejectBooking)
 		return
 	}
 	for i := range s.classes {
@@ -315,15 +315,15 @@ func (s *Server) serveBook(w http.ResponseWriter, id int64) {
 			continue
 		}
 		if c.Booked >= c.Capacity {
-			writeJSON(w, map[string]any{"EsCorrecto": false, "ErrorMsg": "La clase está completa"})
+			writeResult(w, false, "La clase está completa")
 			return
 		}
 		c.Booked++
 		c.State = "Borrable"
-		writeJSON(w, map[string]any{"EsCorrecto": true})
+		writeResult(w, true, "")
 		return
 	}
-	writeJSON(w, map[string]any{"EsCorrecto": false, "ErrorMsg": "Clase inexistente"})
+	writeResult(w, false, "Clase inexistente")
 }
 
 func (s *Server) serveCancel(w http.ResponseWriter, id int64) {
@@ -334,11 +334,24 @@ func (s *Server) serveCancel(w http.ResponseWriter, id int64) {
 		if c.ID == id && c.Booked > 0 {
 			c.Booked--
 			c.State = "Inscribible"
-			writeJSON(w, map[string]any{"EsCorrecto": true})
+			writeResult(w, true, "")
 			return
 		}
 	}
-	writeJSON(w, map[string]any{"EsCorrecto": false, "ErrorMsg": "No estabas inscrito"})
+	writeResult(w, false, "No estabas inscrito")
+}
+
+// writeResult answers an action the way WodBuster does: the verdict under
+// "Res", wrapped in a body that also carries the refreshed day. Getting this
+// shape wrong here is not a detail — the client was written against a guess of
+// it, passed every test, and reported real bookings as failures in production.
+func writeResult(w http.ResponseWriter, ok bool, msg string) {
+	writeJSON(w, map[string]any{
+		"Res": map[string]any{
+			"EsCorrecto": ok, "ErrorMsg": msg, "NeedAdminConfirm": false,
+		},
+		"Mantenimiento": false,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -198,10 +198,14 @@ func (c *Client) action(ctx context.Context, op, handler string, id ClassID, d D
 	if err := c.getJSON(ctx, op, path, &raw); err != nil {
 		return err
 	}
-	if raw.EsCorrecto {
+	res := raw.result()
+	if res.EsCorrecto {
+		if res.NeedAdminConfirm {
+			c.log.Warn("the box still has to confirm this booking", "op", op, "class", id)
+		}
 		return nil
 	}
-	msg := raw.message()
+	msg := res.message()
 	c.log.Debug("wodbuster rejected an action", "op", op, "class", id, "message", msg)
 	return classify(op, msg)
 }
