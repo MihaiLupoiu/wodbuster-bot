@@ -186,6 +186,13 @@ func (c *Client) JoinWaitlist(ctx context.Context, id ClassID, d Date) error {
 }
 
 // Cancel gives the place back.
+//
+// Incomplete, deliberately: the server can answer a cancellation with
+// NeedConfirm, meaning "this is outside the cancellation window, the class will
+// count as attended — still want to?", and expects the same call again with
+// &confirm=1. This does not do that, so a late cancellation comes back as an
+// *APIError and the place is not given up. Saying yes on the caller's behalf
+// would be worse than failing: see todo.md item 10.
 func (c *Client) Cancel(ctx context.Context, id ClassID, d Date) error {
 	return c.action(ctx, "Cancel", "Calendario_Borrar", id, d)
 }

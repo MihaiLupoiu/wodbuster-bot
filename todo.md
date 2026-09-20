@@ -109,6 +109,38 @@ to read.
 Note `cenkalti/backoff/v4` is already in the module graph transitively, via
 testcontainers. v5 would be a new direct dependency.
 
+## 10. `Cancel` does not implement the server's confirmation round trip
+
+Confirmed from the site's JavaScript. `Calendario_Borrar` can answer
+`NeedConfirm: true`, which is not a rejection — it is the server asking a
+question, and the answer is the *same call again* with `&confirm=1`:
+
+```js
+success: function(n){
+  n.NeedConfirm ? confirmWithPromise("Estás cancelando fuera de hora. La clase contará como realizada...")
+      .then(function(n){ n && ii(i,f,true) })   // calls again with &confirm=1
+    : o(n)
+}
+```
+
+`client.go:189` `Cancel` knows nothing about this. A late cancellation — the
+case where it matters, because the class counts as attended — comes back as a
+`*APIError` today, and the place is never given up. This was §10 of the design
+doc as an open question ("may need a confirm=1"); it is now answered.
+
+`Cancel` is outside v1, so nothing is blocked. But the failure mode is someone
+calling it, seeing an error, and not realising the server was waiting for an
+answer — so note it on the method before that happens. Fixing it means
+`wireResult` learning `NeedConfirm`, and `action` growing a way to say yes,
+which should be an explicit opt-in from the caller and not an automatic retry:
+"the class will count as attended" is a decision, not a detail.
+
+For the neighbouring flag, which is a different thing entirely:
+`NeedAdminConfirm` on an *inscription* is the administrator route for signing
+somebody else up to a class that refuses them. As an athlete it should never
+appear; if it did, `action` logs it and today still reports success. Worth
+tightening only if it is ever seen.
+
 ---
 
 ## Cleanups
