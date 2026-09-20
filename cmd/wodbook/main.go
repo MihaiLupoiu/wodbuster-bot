@@ -162,6 +162,8 @@ func run(ctx context.Context, cfg *Config, log *slog.Logger, dryRun, skipWait bo
 		PollEvery:   time.Duration(cfg.PollEveryMs) * time.Millisecond,
 		StartBefore: time.Duration(cfg.StartBeforeMs) * time.Millisecond,
 		GiveUpAfter: time.Duration(cfg.GiveUpAfterMs) * time.Millisecond,
+		RetryEvery:  time.Duration(cfg.RetryEveryMs) * time.Millisecond,
+		StatusEvery: time.Duration(cfg.StatusEveryMs) * time.Millisecond,
 		Attempts:    cfg.Attempts,
 		DryRun:      dryRun,
 		Log:         log,

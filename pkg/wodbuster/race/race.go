@@ -81,8 +81,20 @@ type Options struct {
 	// GiveUpAfter is how long to keep trying past the opening.
 	GiveUpAfter time.Duration
 
-	// Attempts is how many times to retry a booking that lost the race.
+	// Attempts caps the booking calls made for one goal. Zero — the default —
+	// means no cap: keep trying until the class is full, the deadline passes,
+	// or the server says something retrying cannot fix. A place freed by
+	// somebody else two seconds in is still a place.
 	Attempts int
+
+	// RetryEvery is the pause between booking attempts.
+	RetryEvery time.Duration
+
+	// StatusEvery is how often the class is re-read while retrying. It is what
+	// makes "keep trying" safe: it reports how many places are left, notices
+	// the class filling up so the waiting list can take over, and catches a
+	// booking that landed even though its answer did not come back.
+	StatusEvery time.Duration
 
 	// DryRun resolves everything and stops short of the booking call.
 	DryRun bool
@@ -103,8 +115,14 @@ func (o Options) withDefaults() Options {
 	if o.GiveUpAfter <= 0 {
 		o.GiveUpAfter = 90 * time.Second
 	}
-	if o.Attempts <= 0 {
-		o.Attempts = 3
+	if o.Attempts < 0 {
+		o.Attempts = 0
+	}
+	if o.RetryEvery <= 0 {
+		o.RetryEvery = 150 * time.Millisecond
+	}
+	if o.StatusEvery <= 0 {
+		o.StatusEvery = time.Second
 	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.NewTextHandler(discard{}, &slog.HandlerOptions{Level: slog.LevelError + 1}))
@@ -232,24 +250,47 @@ func chaseOne(ctx context.Context, c *wodbuster.Client, g Goal, o Options, deadl
 			return res
 		}
 
-		return book(ctx, c, g, class, o, res)
+		return book(ctx, c, g, class, o, res, deadline)
 	}
 
 	res.Outcome, res.Err, res.At = OutcomeFailed, ErrNeverPublished, time.Now()
 	return res
 }
 
-func book(ctx context.Context, c *wodbuster.Client, g Goal, class wodbuster.Class, o Options, res Result) Result {
+func book(ctx context.Context, c *wodbuster.Client, g Goal, class wodbuster.Class,
+	o Options, res Result, deadline time.Time) Result {
+
+	started := time.Now()
+	lastStatus := started
 	var last error
-	for attempt := 1; attempt <= o.Attempts; attempt++ {
+
+	for attempt := 1; ; attempt++ {
+		if o.Attempts > 0 && attempt > o.Attempts {
+			o.Log.Info("giving up on the attempt limit",
+				"goal", g.Target.String(), "attempts", o.Attempts, "err", last)
+			break
+		}
+		if !time.Now().Before(deadline) {
+			o.Log.Info("giving up on the deadline",
+				"goal", g.Target.String(), "attempts", attempt-1,
+				"after", time.Since(started).Round(time.Millisecond), "err", last)
+			break
+		}
+		if err := ctx.Err(); err != nil {
+			last = err
+			break
+		}
+
 		err := c.Book(ctx, class.ID, class.Date)
 		if err == nil {
+			o.Log.Info("booked", "goal", g.Target.String(), "id", class.ID,
+				"attempt", attempt, "after", time.Since(started).Round(time.Millisecond))
 			res.Outcome, res.At = OutcomeBooked, time.Now()
 			return res
 		}
 		last = err
 
-		// Some failures will never become successes, however fast you retry.
+		// Some answers will never become successes, however fast you retry.
 		if errors.Is(err, wodbuster.ErrAlreadyBooked) {
 			res.Outcome, res.At = OutcomeAlreadyBooked, time.Now()
 			return res
@@ -257,22 +298,101 @@ func book(ctx context.Context, c *wodbuster.Client, g Goal, class wodbuster.Clas
 		if errors.Is(err, wodbuster.ErrNotIncluded) ||
 			errors.Is(err, wodbuster.ErrQuotaExceeded) ||
 			errors.Is(err, wodbuster.ErrSessionExpired) {
+			o.Log.Info("not retrying", "goal", g.Target.String(),
+				"attempt", attempt, "err", err)
 			break
 		}
+
 		o.Log.Debug("booking attempt failed",
-			"goal", g.Target.String(), "attempt", attempt, "err", err)
-		sleep(ctx, 150*time.Millisecond)
+			"goal", g.Target.String(), "attempt", attempt,
+			"after", time.Since(started).Round(time.Millisecond), "err", err)
+
+		// Full is the one failure that changes the plan rather than the odds.
+		if errors.Is(err, wodbuster.ErrClassFull) {
+			if !g.Waitlist {
+				o.Log.Info("class is full and the waiting list is off",
+					"goal", g.Target.String(), "attempt", attempt)
+				break
+			}
+			if r, done := joinWaitlist(ctx, c, g, class, o, res); done {
+				return r
+			}
+		}
+
+		if time.Since(lastStatus) >= o.StatusEvery {
+			lastStatus = time.Now()
+			if r, done := status(ctx, c, g, &class, o, res, attempt, started); done {
+				return r
+			}
+		}
+
+		sleep(ctx, o.RetryEvery)
 	}
 
+	// Out of attempts or out of time. If the last thing we know is that the
+	// class is full, the waiting list is still worth one try.
 	if g.Waitlist && errors.Is(last, wodbuster.ErrClassFull) {
-		if err := c.JoinWaitlist(ctx, class.ID, class.Date); err == nil {
-			res.Outcome, res.At = OutcomeWaitlisted, time.Now()
-			return res
+		if r, done := joinWaitlist(ctx, c, g, class, o, res); done {
+			return r
 		}
 	}
 
 	res.Outcome, res.Err, res.At = OutcomeFailed, last, time.Now()
 	return res
+}
+
+// joinWaitlist tries the waiting list once. A refusal is not fatal: places come
+// back when people cancel, so the caller keeps chasing the booking itself.
+func joinWaitlist(ctx context.Context, c *wodbuster.Client, g Goal, class wodbuster.Class,
+	o Options, res Result) (Result, bool) {
+
+	if err := c.JoinWaitlist(ctx, class.ID, class.Date); err != nil {
+		o.Log.Warn("could not join the waiting list",
+			"goal", g.Target.String(), "id", class.ID, "err", err)
+		return res, false
+	}
+	o.Log.Info("joined the waiting list", "goal", g.Target.String(), "id", class.ID)
+	res.Outcome, res.At = OutcomeWaitlisted, time.Now()
+	res.Class = class
+	return res, true
+}
+
+// status re-reads the class mid-retry: it is both the progress report and the
+// escape hatch. It refreshes the id in place, since a ClassID is only valid
+// for the read it came from.
+func status(ctx context.Context, c *wodbuster.Client, g Goal, class *wodbuster.Class,
+	o Options, res Result, attempt int, started time.Time) (Result, bool) {
+
+	day, err := c.Schedule(ctx, class.Date)
+	if err != nil {
+		o.Log.Debug("status read failed", "goal", g.Target.String(), "err", err)
+		return res, false
+	}
+	cur, err := day.Resolve(g.Target)
+	if err != nil {
+		o.Log.Debug("status read could not find the class",
+			"goal", g.Target.String(), "err", err)
+		return res, false
+	}
+	*class = cur
+	res.Class = cur
+
+	o.Log.Info("still trying", "goal", g.Target.String(), "id", cur.ID,
+		"attempt", attempt, "free", cur.Free(), "capacity", cur.Capacity,
+		"state", cur.State.String(), "elapsed", time.Since(started).Round(time.Millisecond))
+
+	// The booking may have landed even though its answer did not come back.
+	if cur.State == wodbuster.StateBooked {
+		o.Log.Info("the class reads as booked; taking it",
+			"goal", g.Target.String(), "id", cur.ID)
+		res.Outcome, res.At = OutcomeAlreadyBooked, time.Now()
+		return res, true
+	}
+	// No places left: retrying Book is now pointless, the waiting list is not.
+	if cur.Free() <= 0 && g.Waitlist {
+		return joinWaitlist(ctx, c, g, cur, o, res)
+	}
+	return res, false
 }
 
 func sleep(ctx context.Context, d time.Duration) {

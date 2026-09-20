@@ -85,9 +85,12 @@ func TestChaseFallsBackToWaitlist(t *testing.T) {
 	if results[0].Outcome != race.OutcomeWaitlisted {
 		t.Fatalf("outcome = %v, err = %v", results[0].Outcome, results[0].Err)
 	}
-	if got := srv.Count("Calendario_Inscribir"); got != o.Attempts {
-		t.Errorf("attempts = %d, want %d", got, o.Attempts)
+	// Full is the one refusal worth acting on rather than retrying: the
+	// waiting list takes over at the first one, not after a fixed count.
+	if got := srv.Count("Calendario_Inscribir"); got != 1 {
+		t.Errorf("booking attempts = %d, want 1", got)
 	}
+	_ = o
 	if srv.Count("Calendario_Avisar") != 1 {
 		t.Errorf("waitlist calls = %d, want 1", srv.Count("Calendario_Avisar"))
 	}
@@ -304,5 +307,102 @@ func TestWaitUntilRespectsTheHeadStart(t *testing.T) {
 	waited := time.Since(start)
 	if waited > 220*time.Millisecond {
 		t.Errorf("waited %v; should have returned a head start early", waited)
+	}
+}
+
+// The policy the gym's opening actually calls for: a refusal that is not "the
+// class is full" means somebody else was quicker on that request, not that the
+// place is gone. Keep asking.
+func TestChaseKeepsTryingUntilItGetsIn(t *testing.T) {
+	srv := wodbustertest.New(t)
+	id := srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: monday, Capacity: 12})
+	srv.RejectNextBookings(6, "Inténtalo de nuevo")
+
+	o := fastOptions()
+	o.Attempts = 0 // no cap: keep going until it works or time runs out
+	o.RetryEvery = 5 * time.Millisecond
+	results := race.Chase(context.Background(), client(t, srv), []race.Goal{goal(true)}, o)
+
+	if results[0].Outcome != race.OutcomeBooked {
+		t.Fatalf("outcome = %v, err = %v", results[0].Outcome, results[0].Err)
+	}
+	if got := srv.Count("Calendario_Inscribir"); got != 7 {
+		t.Errorf("booking attempts = %d, want 7 (6 refusals then the one that worked)", got)
+	}
+	if srv.BookedCount(id) != 1 {
+		t.Errorf("booked = %d, want 1", srv.BookedCount(id))
+	}
+}
+
+// ...but once the places are gone, retrying is pointless and the waiting list
+// is the whole remaining plan. The class fills up mid-race here, so the only
+// way to notice is the status read.
+func TestChaseWaitlistsWhenTheClassFillsUpMidRace(t *testing.T) {
+	srv := wodbustertest.New(t)
+	id := srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: monday, Capacity: 12})
+	srv.RejectNextBookings(100, "Inténtalo de nuevo")
+
+	o := fastOptions()
+	o.Attempts = 0
+	o.RetryEvery = 5 * time.Millisecond
+	o.StatusEvery = 20 * time.Millisecond
+	o.GiveUpAfter = 2 * time.Second
+
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		srv.FillClass(id)
+	}()
+
+	results := race.Chase(context.Background(), client(t, srv), []race.Goal{goal(true)}, o)
+
+	if results[0].Outcome != race.OutcomeWaitlisted {
+		t.Fatalf("outcome = %v, err = %v", results[0].Outcome, results[0].Err)
+	}
+	if srv.Count("Calendario_Avisar") != 1 {
+		t.Errorf("waitlist calls = %d, want 1", srv.Count("Calendario_Avisar"))
+	}
+}
+
+// A booking that lands while its answer goes missing must not turn into a
+// failure: the next status read sees the class booked and takes it.
+func TestChaseNoticesABookingThatLandedSilently(t *testing.T) {
+	srv := wodbustertest.New(t)
+	id := srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: monday, Capacity: 12})
+	srv.RejectNextBookings(100, "Inténtalo de nuevo")
+
+	o := fastOptions()
+	o.Attempts = 0
+	o.RetryEvery = 5 * time.Millisecond
+	o.StatusEvery = 20 * time.Millisecond
+	o.GiveUpAfter = 2 * time.Second
+
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		srv.MarkBooked(id)
+	}()
+
+	results := race.Chase(context.Background(), client(t, srv), []race.Goal{goal(true)}, o)
+
+	if results[0].Outcome != race.OutcomeAlreadyBooked {
+		t.Fatalf("outcome = %v, err = %v", results[0].Outcome, results[0].Err)
+	}
+}
+
+// The cap still exists for callers who want one.
+func TestChaseRespectsAnAttemptLimit(t *testing.T) {
+	srv := wodbustertest.New(t)
+	srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: monday, Capacity: 12})
+	srv.RejectBookings("Inténtalo de nuevo")
+
+	o := fastOptions()
+	o.Attempts = 4
+	o.RetryEvery = 5 * time.Millisecond
+	results := race.Chase(context.Background(), client(t, srv), []race.Goal{goal(false)}, o)
+
+	if results[0].Outcome != race.OutcomeFailed {
+		t.Fatalf("outcome = %v", results[0].Outcome)
+	}
+	if got := srv.Count("Calendario_Inscribir"); got != 4 {
+		t.Errorf("booking attempts = %d, want 4", got)
 	}
 }

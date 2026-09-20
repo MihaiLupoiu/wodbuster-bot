@@ -58,7 +58,10 @@ func TestLoadConfigFillsInDefaults(t *testing.T) {
 	assert.Equal(t, 250, cfg.PollEveryMs)
 	assert.Equal(t, 2000, cfg.StartBeforeMs)
 	assert.Equal(t, 90000, cfg.GiveUpAfterMs)
-	assert.Equal(t, 3, cfg.Attempts)
+	// 0 means "keep trying until the class is full or the deadline passes".
+	assert.Equal(t, 0, cfg.Attempts)
+	assert.Equal(t, 150, cfg.RetryEveryMs)
+	assert.Equal(t, 1000, cfg.StatusEveryMs)
 	assert.True(t, cfg.headless(), "headless defaults to true when the key is absent")
 	require.NotNil(t, cfg.loc, "validate must resolve the timezone")
 }

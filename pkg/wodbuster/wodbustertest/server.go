@@ -68,6 +68,12 @@ type Server struct {
 	// instead of consuming a place. Use it to exercise the losing path.
 	rejectBooking string
 
+	// rejectNext makes the next n bookings fail with rejectNextMsg, after
+	// which the class behaves normally. It is how you rehearse losing the
+	// first few rounds of a race and still getting in.
+	rejectNext    int
+	rejectNextMsg string
+
 	// ExpireSession makes every handler answer with the login page.
 	expireSession bool
 
@@ -164,6 +170,40 @@ func (s *Server) RejectBookings(msg string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rejectBooking = msg
+}
+
+// RejectNextBookings makes the next n booking calls fail with msg, then lets
+// bookings succeed again.
+func (s *Server) RejectNextBookings(n int, msg string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rejectNext, s.rejectNextMsg = n, msg
+}
+
+// FillClass takes every remaining place, as if the rest of the gym got there
+// first.
+func (s *Server) FillClass(id int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.classes {
+		if s.classes[i].ID == id {
+			s.classes[i].Booked = s.classes[i].Capacity
+			s.classes[i].State = "Avisable"
+		}
+	}
+}
+
+// MarkBooked makes the class read as booked by this athlete, as it would after
+// a booking whose answer never arrived.
+func (s *Server) MarkBooked(id int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.classes {
+		if s.classes[i].ID == id {
+			s.classes[i].Booked++
+			s.classes[i].State = "Borrable"
+		}
+	}
 }
 
 // ExpireSession makes every handler answer with the login page.
@@ -307,6 +347,11 @@ func (s *Server) serveBook(w http.ResponseWriter, id int64) {
 
 	if s.rejectBooking != "" {
 		writeResult(w, false, s.rejectBooking)
+		return
+	}
+	if s.rejectNext > 0 {
+		s.rejectNext--
+		writeResult(w, false, s.rejectNextMsg)
 		return
 	}
 	for i := range s.classes {

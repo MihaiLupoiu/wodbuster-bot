@@ -15,6 +15,10 @@
   "waitlist": true,
   "trustDevice": false,
 
+  "retryEveryMs": 150,
+  "statusEveryMs": 1000,
+  "attempts": 0,
+
   "chromePath": "",
   "headless": true,
   "diagnosticsDir": "./diagnostics"

@@ -171,21 +171,84 @@ config, `3` login failed.
 
 ### What a rehearsal still does not prove
 
-- **The booking response.** No real `Calendario_Inscribir` reply has been seen,
-  so the rejection strings in `classify` remain a guess (below).
+- **Winning.** `-dry` stops before the one call that takes a place, so a
+  rehearsal never proves the booking itself — only everything leading to it.
 - **The countdown.** `-now` skips the wait, so it never exercises
   `SegundosHastaPublicacion` being positive.
 - **Losing.** A rehearsal never races anyone. That path is covered against
   `wodbustertest`, not against the real site.
 
-## Not verified yet
+## How the chase retries
 
-The error strings in `classify` (errors.go) were **inferred from the site's
-minified JavaScript, not from observed failures**. No real rejection body has
-been seen. Unmatched messages degrade to `*APIError` with the text intact, so a
-wrong guess is readable rather than silent — but the list needs confirming
-against real failures: a full class, an exhausted plan, an expired session.
+One refusal is not one answer. At an opening, a booking call can fail because
+somebody else's request landed first — and a place freed a second later is still
+a place. So `race` separates the two kinds of refusal:
 
-Also unconfirmed: whether `SegundosHastaPublicacion` is positive before an
-opening (only negative values have been observed, after the fact), and whether
-class ids shift if the box edits a published week.
+- **"The class is full"** changes the plan. Retrying is pointless; the waiting
+  list takes over immediately, on the first such answer, if `waitlist` is on.
+- **Anything else** is just a lost round. It keeps trying until it gets in, the
+  class fills up, or `giveUpAfterMs` runs out.
+
+While retrying, it re-reads the class every `statusEveryMs` and logs what it
+sees. That status read is what makes "keep trying" safe rather than blind:
+
+```
+level=INFO msg="still trying" goal="Monday 2026-09-21 07:00 Wod" attempt=12 free=2 capacity=12 state=bookable elapsed=1.8s
+level=INFO msg="joined the waiting list" goal="Monday 2026-09-21 07:00 Wod" id=36712
+```
+
+It also catches the case where a booking landed but its answer did not come
+back: the class reads as booked, and the result is `already-booked` rather than
+a spurious failure.
+
+Tuning, all optional:
+
+```jsonc
+"retryEveryMs":  150,   // pause between booking attempts
+"statusEveryMs": 1000,  // how often to re-read the class while retrying
+"giveUpAfterMs": 90000, // the real limit: how long the whole chase may last
+"attempts":      0      // 0 = no cap. Set a number only to bound the calls.
+```
+
+## What the real server answers
+
+Observed against firespain on 2026-09-20, during a live opening and the probing
+that followed. Until then this section was a guess, and the guess was wrong in a
+way that cost a booking report: `Calendario_Inscribir` does **not** answer with a
+small verdict object. It answers with the whole refreshed day — the same payload
+`LoadClass` returns, tens of kilobytes of it — and the verdict is one field deep:
+
+```json
+{ "Mantenimiento": false, "Title": "...", "Data": [ ... ],
+  "Res": { "EsCorrecto": false,
+           "ErrorMsg": "Ya estabas apuntado a esta clase.",
+           "NeedAdminConfirm": false } }
+```
+
+Reading `EsCorrecto` at the top level finds nothing, which decodes as `false`
+with no message: **successful bookings report as failures**. Note also
+`NeedAdminConfirm`, not `NeedConfirmAdmin` as previously assumed.
+
+Real messages confirmed so far:
+
+| Message | Maps to |
+|---|---|
+| `Ya estabas apuntado a esta clase.` | `ErrAlreadyBooked` |
+| `No puedes apuntarte porque ya te has apuntado a todas las clases de tu tarifa y no tienes créditos suficientes de clases sueltas.` | `ErrQuotaExceeded` |
+| `No puedes borrarte porque no estabas apuntado.` | `*APIError` (Cancel) |
+
+The quota message mentions *tarifa*, which is why `classify` checks quota before
+plan membership: matching `tarifa` first called an exhausted weekly quota a class
+outside the plan, and those call for opposite reactions.
+
+`wodbustertest` speaks this shape. It did not before, which is exactly why the
+whole suite passed against a server that does not exist.
+
+## Still not verified
+
+- The remaining `classify` strings — a full class, an expired session — are
+  still inferred from the site's minified JavaScript. Unmatched messages degrade
+  to `*APIError` with the text intact, so a wrong guess is readable, not silent.
+- Whether `SegundosHastaPublicacion` is positive before an opening; only
+  negative values have been seen, after the fact.
+- Whether class ids shift if the box edits a published week.

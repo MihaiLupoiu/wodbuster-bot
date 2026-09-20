@@ -50,7 +50,12 @@ type Config struct {
 	PollEveryMs   int `json:"pollEveryMs"`
 	StartBeforeMs int `json:"startBeforeMs"`
 	GiveUpAfterMs int `json:"giveUpAfterMs"`
-	Attempts      int `json:"attempts"`
+	RetryEveryMs  int `json:"retryEveryMs"`
+	StatusEveryMs int `json:"statusEveryMs"`
+
+	// Attempts caps the booking calls per class. Leave it out, or set it to 0,
+	// to keep trying until the class fills up or giveUpAfterMs runs out.
+	Attempts int `json:"attempts"`
 
 	loc *time.Location
 }
@@ -147,8 +152,14 @@ func loadConfig(path string) (*Config, error) {
 	if c.GiveUpAfterMs <= 0 {
 		c.GiveUpAfterMs = 90000
 	}
-	if c.Attempts <= 0 {
-		c.Attempts = 3
+	if c.RetryEveryMs <= 0 {
+		c.RetryEveryMs = 150
+	}
+	if c.StatusEveryMs <= 0 {
+		c.StatusEveryMs = 1000
+	}
+	if c.Attempts < 0 {
+		c.Attempts = 0
 	}
 
 	return c, c.validate()

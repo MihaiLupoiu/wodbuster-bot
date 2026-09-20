@@ -71,20 +71,43 @@ values we have not seen. `wodbustertest` already serves `"NoCalendar"`
 
 ## 8. The waiting-list error is swallowed
 
-`pkg/wodbuster/race/race.go:267`:
+Partly addressed by the retry rework: `joinWaitlist` now logs the failure at
+`Warn` and carries on chasing the booking, so a broken waitlist call is no
+longer invisible while it happens.
 
-```go
-if err := c.JoinWaitlist(ctx, class.ID, class.Date); err == nil {
-    ...
-}
-```
-
-If `JoinWaitlist` fails, its error is dropped and the result reports the
-*booking* error instead. A broken waitlist call is then indistinguishable from
-a class that was simply full, which is the one diagnosis you would act on.
+What is still open is the *result*. On the way out, `Result.Err` reports the
+booking error alone; the waitlist error is nowhere in it. A run that failed
+because the waiting list is broken still reads, afterwards, exactly like a class
+that was simply full — which is the one diagnosis you would act on.
 
 Join the two with `errors.Join`, or put the waitlist error in `Result.Err` and
 keep the booking error as its cause.
+
+## 9. Transient HTTP failures retry without backoff, if at all
+
+Every retry in the stack is a fixed-interval loop written by hand:
+`race` retries a refused booking every `retryEveryMs`, and a failed
+`c.Schedule` poll simply comes round again on the next `pollEvery`. Below that,
+`Client` does not retry at all — a connection reset or a 502 at T+0, when the
+box's server is at its busiest, is returned as a plain error and the caller
+treats it like a rejection.
+
+That is the case where `github.com/cenkalti/backoff/v5` earns its keep:
+exponential backoff with jitter on transport-level failures, in the client's
+request path (`client.go:108` `get`), not in the race loop.
+
+The race loop should stay hand-rolled, and the reason is worth writing down so
+this does not get "fixed" later: it deliberately does **not** back off — at an
+opening the value of an attempt collapses within seconds, so steady pressure is
+the policy — and it has four terminal outcomes, two of which are successes
+discovered out of band (`waitlisted`, `already-booked` from the status read).
+`backoff.Retry` models one success and one permanent error; expressing the other
+two through `backoff.Permanent` plus unwrapping inverts control to save about
+twenty lines and makes the interesting part — which refusal means what — harder
+to read.
+
+Note `cenkalti/backoff/v4` is already in the module graph transitively, via
+testcontainers. v5 would be a new direct dependency.
 
 ---
 
