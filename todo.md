@@ -184,27 +184,28 @@ tightening only if it is ever seen.
 
 ## Adjacent, and not part of the patches
 
-- [ ] **The bot and the CLI disagree about when the week opens.** The cron is
-      `55 11 * * 6`, Saturday 11:55 (`internal/telegram/usecase/scheduler.go:52`,
-      and the root README says the same). `cmd/wodbook/config.example.json` says
-      Sunday 12:00, following the design doc, which was written from a real
-      observation on a Sunday.
+- [x] **The bot and the CLI disagreed about when the week opens.** Settled by
+      two live runs (2026-09-20, 2026-09-27): **Sunday 12:00 Europe/Madrid**.
+      The bot's Saturday 11:55 cron was wrong and fired on a day when nothing
+      publishes. The opening is now one value in one place,
+      `usecase.DefaultOpening` (`internal/telegram/usecase/opening.go`), and the
+      scheduler derives its cron from it.
 
-      Both cannot be right, and the wrong one fires on a day when nothing
-      publishes — a failure that looks exactly like a bug in the booking code.
-      Settle it against the real box before the next opening; `wodbook -now -dry`
-      on each candidate day answers it, since an unpublished day comes back
-      `NoCalendar`.
+- [x] **`internal/models/user.go` stored a single cookie.** Resolved by not
+      storing a session at all. A WodBuster session is a session cookie with no
+      expiry of its own, dropped by the server after a while idle, so one saved
+      on Monday is worthless by Sunday. Every run logs in fresh with the
+      (encrypted) password, which is what the bot already kept. The cookie
+      field, `SessionValid`, `SessionExpiresAt` and the session helpers are
+      gone from the model.
 
-- [ ] **`internal/models/user.go:15` still stores a single cookie.**
+- [ ] **`internal/booking.Run` and `cmd/wodbook`'s `run` are the same sequence
+      twice.** Authenticate, sync the clock, resolve targets, read the server
+      countdown, wait, ping, chase. Two copies that must stay in step, and the
+      CLI is the one that gets exercised weekly. Worth extracting once the bot
+      has had a real Sunday — not before, because the duplication is currently
+      the only thing keeping the CLI independent of the bot's config shape.
 
-      ```go
-      WODBusterSessionCookie *http.Cookie `bson:"wodbuster_session_cookie,omitempty"`
-      ```
-
-      Design §5.1 calls this the one thing that is expensive to fix later,
-      because it is in the Mongo schema: a WodBuster login leaves several
-      cookies, and keeping only the important-looking one works until it does
-      not. The new `wodbuster.Session` already carries the whole jar. The
-      collection is empty today, so the change is free; after the first real
-      user it is a migration.
+- [ ] **The bot never cancels.** `/book` adds a class; nothing removes one, and
+      `Cancel` is deliberately incomplete (item 10). A user who changes their
+      mind has to do it on the website.

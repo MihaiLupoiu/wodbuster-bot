@@ -1,9 +1,6 @@
 package models
 
-import (
-	"net/http"
-	"time"
-)
+import "time"
 
 type User struct {
 	ChatID                int64                  `json:"chat_id" bson:"chat_id"`
@@ -11,13 +8,14 @@ type User struct {
 	Email                 string                 `json:"email" bson:"email"`
 	Password              string                 `json:"password" bson:"password"`
 	ClassBookingSchedules []ClassBookingSchedule `json:"class_booking_schedules" bson:"class_booking_schedules"`
-	// Session data - simplified to store only the essential WODBuster session cookie
-	WODBusterSessionCookie *http.Cookie `json:"wodbuster_session_cookie,omitempty" bson:"wodbuster_session_cookie,omitempty"`
-	SessionExpiresAt       time.Time    `json:"session_expires_at,omitempty" bson:"session_expires_at,omitempty"`
-	SessionValid           bool         `json:"session_valid" bson:"session_valid"`
-	LastLoginTime          time.Time    `json:"last_login_time,omitempty" bson:"last_login_time,omitempty"`
-	CreatedAt              time.Time    `json:"created_at" bson:"created_at"`
-	UpdatedAt              time.Time    `json:"updated_at" bson:"updated_at"`
+
+	// No session is stored. A WodBuster session is a session cookie with no
+	// expiry of its own, dropped by the server after a while idle, so one
+	// saved on Monday is worthless by Sunday. Every run logs in again, which
+	// is why the (encrypted) password is what gets kept.
+	LastLoginTime time.Time `json:"last_login_time,omitempty" bson:"last_login_time,omitempty"`
+	CreatedAt     time.Time `json:"created_at" bson:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at" bson:"updated_at"`
 }
 
 type ClassBookingSchedule struct {
@@ -51,25 +49,4 @@ type BookingWindow struct {
 	OpensAt       time.Time     `json:"opens_at"`       // When booking opens
 	TimeRemaining time.Duration `json:"time_remaining"` // Time until booking opens
 	IsOpen        bool          `json:"is_open"`        // Whether booking is currently open
-}
-
-// Helper methods for session management
-func (u *User) HasValidSession() bool {
-	return u.SessionValid &&
-		u.WODBusterSessionCookie != nil &&
-		time.Now().Before(u.SessionExpiresAt)
-}
-
-func (u *User) UpdateSession(sessionCookie *http.Cookie) {
-	u.WODBusterSessionCookie = sessionCookie
-	u.LastLoginTime = time.Now()
-	u.SessionExpiresAt = sessionCookie.Expires
-	u.SessionValid = true
-	u.UpdatedAt = time.Now()
-}
-
-func (u *User) ClearSession() {
-	u.WODBusterSessionCookie = nil
-	u.SessionValid = false
-	u.UpdatedAt = time.Now()
 }

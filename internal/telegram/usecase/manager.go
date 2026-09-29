@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"time"
 
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/utils"
 )
@@ -38,14 +38,21 @@ type Storage interface {
 	UpdateBookingStatus(ctx context.Context, attemptID string, status string, errorMsg string) error
 }
 
-type APIClient interface {
-	LogIn(ctx context.Context, email, password string) (*http.Cookie, error)
-	BookClass(ctx context.Context, email, password string, day, classType, hour string) error
+// Booker is the bot's view of pkg/wodbuster, implemented by internal/booking.
+//
+// Authenticate answers one question — do these credentials work — and keeps
+// nothing: a WodBuster session is a session cookie, so it will not survive
+// until the opening. Every run logs in again, which is why the password is
+// stored (encrypted) and the session is not.
+type Booker interface {
+	Authenticate(ctx context.Context, email, password string) error
+	Run(ctx context.Context, email, password string, targets []booking.Target,
+		o booking.RunOptions) ([]booking.Outcome, error)
 }
 
 type Manager struct {
 	storage          Storage
-	clientAPI        APIClient
+	booker           Booker
 	encryptionKey    string
 	bookingScheduler *BookingScheduler
 	logger           *slog.Logger
@@ -54,14 +61,14 @@ type Manager struct {
 // NewManager creates a new manager with injected dependencies
 func NewManager(
 	storage Storage,
-	clientAPI APIClient,
+	booker Booker,
 	encryptionKey string,
 	bookingScheduler *BookingScheduler,
 	logger *slog.Logger,
 ) *Manager {
 	return &Manager{
 		storage:          storage,
-		clientAPI:        clientAPI,
+		booker:           booker,
 		encryptionKey:    encryptionKey,
 		bookingScheduler: bookingScheduler,
 		logger:           logger,
@@ -88,13 +95,12 @@ func (m *Manager) GetUser(ctx context.Context, chatID int64) (models.User, bool)
 }
 
 func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, password string) error {
-	// Test login with WODBuster first to validate credentials and get session cookie
-	sessionCookie, err := m.testWODBusterLogin(ctx, email, password)
-	if err != nil {
+	// A real login against the real site, so that bad credentials are caught
+	// here and not at noon on Sunday.
+	if err := m.booker.Authenticate(ctx, email, password); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidWODBusterLogin, err)
 	}
 
-	// Encrypt the password before storing
 	encryptedPassword, err := utils.EncryptPassword(password, m.encryptionKey)
 	if err != nil {
 		m.logger.Error("Failed to encrypt password", "error", err, "chat_id", chatID)
@@ -102,33 +108,18 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 	}
 
 	user := models.User{
-		ChatID:                 chatID,
-		IsAuthenticated:        true,
-		Email:                  email,
-		Password:               encryptedPassword,
-		ClassBookingSchedules:  []models.ClassBookingSchedule{},
-		WODBusterSessionCookie: sessionCookie,
-		SessionExpiresAt:       sessionCookie.Expires,
-		SessionValid:           true,
-		LastLoginTime:          time.Now(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
+		ChatID:                chatID,
+		IsAuthenticated:       true,
+		Email:                 email,
+		Password:              encryptedPassword,
+		ClassBookingSchedules: []models.ClassBookingSchedule{},
+		LastLoginTime:         time.Now(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
 	}
 
 	m.logger.Info("Successfully validated login and saved user", "chat_id", chatID, "email", email)
 	return m.storage.SaveUser(ctx, user)
-}
-
-// testWODBusterLogin validates credentials using the injected API client
-func (m *Manager) testWODBusterLogin(ctx context.Context, email, password string) (*http.Cookie, error) {
-	// Use the injected client to validate credentials and get session cookie
-	sessionCookie, err := m.clientAPI.LogIn(ctx, email, password)
-	if err != nil {
-		return nil, fmt.Errorf("login validation failed: %w", err)
-	}
-
-	m.logger.Info("Login validation successful", "email", email)
-	return sessionCookie, nil
 }
 
 func (m *Manager) GetDecryptedPassword(ctx context.Context, chatID int64) (string, error) {
@@ -155,7 +146,7 @@ func (m *Manager) ScheduleBookClass(ctx context.Context, chatID int64, class mod
 		Hour:        class.Hour,
 		ClassType:   class.ClassType,
 		Status:      "pending",
-		AttemptTime: calculateNextSaturday(), // When the booking should be attempted
+		AttemptTime: m.nextOpening(), // When the booking should be attempted
 		RetryCount:  0,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -164,20 +155,11 @@ func (m *Manager) ScheduleBookClass(ctx context.Context, chatID int64, class mod
 	return m.storage.SaveBookingAttempt(ctx, bookingAttempt)
 }
 
-// calculateNextSaturday calculates when the next Saturday 12:00 will be
-func calculateNextSaturday() time.Time {
-	now := time.Now()
-
-	// Find next Saturday
-	daysUntilSaturday := (int(time.Saturday) - int(now.Weekday()) + 7) % 7
-	if daysUntilSaturday == 0 && now.Hour() >= 12 {
-		daysUntilSaturday = 7 // If it's Saturday and past 12:00, go to next Saturday
-	}
-
-	nextSaturday := now.AddDate(0, 0, daysUntilSaturday)
-
-	// Set to 12:00 PM (booking time)
-	return time.Date(nextSaturday.Year(), nextSaturday.Month(), nextSaturday.Day(), 12, 0, 0, 0, time.UTC)
+// nextOpening is when the coming week is published. Sunday 12:00 Madrid,
+// confirmed by live runs on 2026-09-20 and 2026-09-27; the bot used to assume
+// Saturday, which is a day on which nothing publishes.
+func (m *Manager) nextOpening() time.Time {
+	return m.bookingScheduler.opening.Next(time.Now())
 }
 
 // GetActiveBookings returns currently active booking attempts
@@ -190,20 +172,24 @@ func (m *Manager) CancelBooking(chatID int64) bool {
 	return m.bookingScheduler.CancelBooking(chatID)
 }
 
-// TestUserSession validates if user has a working session
+// TestUserSession checks that the stored credentials still work, by logging in
+// with them. There is no stored session to test any more — and "can I log in
+// right now" is the question that actually matters before an opening.
 func (m *Manager) TestUserSession(ctx context.Context, chatID int64) error {
 	user, exists := m.storage.GetUser(ctx, chatID)
 	if !exists {
 		return ErrUserNotFound
 	}
-
-	if !user.HasValidSession() {
-		return fmt.Errorf("user session is invalid or expired")
+	password, err := utils.DecryptPassword(user.Password, m.encryptionKey)
+	if err != nil {
+		return fmt.Errorf("could not read the stored password: %w", err)
 	}
+	return m.booker.Authenticate(ctx, user.Email, password)
+}
 
-	// Could optionally test the session by creating a temporary client and checking
-	// if the session cookie still works, but for now just check if it exists and hasn't expired
-	return nil
+// Rehearse books nothing and reports what the run would find right now.
+func (m *Manager) Rehearse(ctx context.Context, chatID int64) ([]booking.Outcome, error) {
+	return m.bookingScheduler.Rehearse(ctx, chatID)
 }
 
 // GetScheduleInfo returns information about the next scheduled booking run

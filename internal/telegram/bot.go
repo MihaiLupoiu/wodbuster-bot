@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/handlers"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/usecase"
@@ -23,6 +24,7 @@ type BotManager interface {
 	CancelBooking(chatID int64) bool
 	TestUserSession(ctx context.Context, chatID int64) error
 	GetScheduleInfo() string
+	Rehearse(ctx context.Context, chatID int64) ([]booking.Outcome, error)
 }
 
 type Bot struct {
@@ -140,6 +142,8 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 		b.handleActiveBookings(update)
 	case "schedule":
 		b.handleSchedule(update)
+	case "rehearse":
+		b.handleRehearse(update)
 	case "help":
 		b.sendMessage(update.Message.Chat.ID,
 			"🤖 **WODBuster Bot Commands**\n\n"+
@@ -151,13 +155,14 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 				"  Example: `/book Monday 10:00 wod`\n"+
 				"• `/active` - Show active booking attempts\n"+
 				"• `/status` - Show your account status\n"+
-				"• `/schedule` - Show next booking schedule\n\n"+
+				"• `/schedule` - Show when the next run happens\n"+
+				"• `/rehearse` - Try your classes now, booking nothing\n\n"+
 				"**Other:**\n"+
 				"• `/help` - Show this help message\n\n"+
 				"**How it works:**\n"+
 				"1. Login with your WODBuster credentials\n"+
 				"2. Schedule classes with `/book`\n"+
-				"3. Every Saturday at 11:55, the bot will automatically book your classes when they open at 12:00!")
+				"3. On Sunday the bot wakes up before noon and books your classes the moment the week opens!")
 	default:
 		b.sendMessage(update.Message.Chat.ID,
 			"I don't know that command. Use /help to see available commands")
@@ -230,6 +235,52 @@ func (b *Bot) handleActiveBookings(update tgbotapi.Update) {
 		"Class: " + userBooking.BookingData.Day + " " + userBooking.BookingData.Hour + " - " + userBooking.BookingData.ClassType + "\n"
 
 	b.sendMessage(chatID, message)
+}
+
+// Notify delivers a booking result to an athlete. It is how the Sunday run
+// reports back: nobody is watching the logs at noon.
+func (b *Bot) Notify(chatID int64, text string) {
+	b.sendMessage(chatID, text)
+}
+
+// handleRehearse runs the athlete's classes right now against the published
+// week and books nothing, so a broken login or a renamed class is found on a
+// Tuesday rather than at the opening.
+func (b *Bot) handleRehearse(update tgbotapi.Update) {
+	ctx := context.Background()
+	chatID := update.Message.Chat.ID
+
+	if !b.manager.IsAuthenticated(ctx, chatID) {
+		b.sendMessage(chatID, "❌ You are not authenticated. Please use /login first.")
+		return
+	}
+
+	b.sendMessage(chatID, "🧪 Rehearsing: logging in and resolving your classes. Nothing will be booked.\n"+
+		"This takes a few seconds.")
+
+	outcomes, err := b.manager.Rehearse(ctx, chatID)
+	if err != nil {
+		b.sendMessage(chatID, "❌ Rehearsal failed: "+err.Error())
+		return
+	}
+
+	msg := "🧪 **Rehearsal results**\n\n"
+	for _, o := range outcomes {
+		msg += formatOutcome(o) + "\n"
+	}
+	msg += "\nA class the box has not published yet cannot be found — that is expected " +
+		"before the opening, not a failure of your setup."
+	b.sendMessage(chatID, msg)
+}
+
+func formatOutcome(o booking.Outcome) string {
+	if o.Err != nil {
+		return "❌ " + o.Class + ": " + o.Err.Error()
+	}
+	if o.Status == "dry-run" {
+		return "✅ " + o.Class + " — found and bookable"
+	}
+	return "• " + o.Class + " — " + o.Status
 }
 
 func (b *Bot) handleSchedule(update tgbotapi.Update) {

@@ -189,6 +189,15 @@ a place. So `race` separates the two kinds of refusal:
 - **Anything else** is just a lost round. It keeps trying until it gets in, the
   class fills up, or `giveUpAfterMs` runs out.
 
+One refusal is special enough to name: `ErrBusy` —
+*"Estás usando la reserva de clases en otro sitio, espera que termine y vuelve
+a intentarlo"*. WodBuster allows one booking operation per athlete at a time,
+so three goals booking at once collide with each other rather than with other
+athletes. `Client` now queues its own `Book` / `JoinWaitlist` / `Cancel` calls
+(reads stay parallel), which turns a guaranteed refusal into a short wait and
+halves the requests the box sees. Seeing `ErrBusy` after that means something
+else holds the athlete's lock — another process, or the site open in a browser.
+
 While retrying, it re-reads the class every `statusEveryMs` and logs what it
 sees. That status read is what makes "keep trying" safe rather than blind:
 

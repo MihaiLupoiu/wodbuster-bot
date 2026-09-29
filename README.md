@@ -1,6 +1,6 @@
 # 🤖 WODBuster Bot
 
-A Telegram bot that automatically books fitness classes on WODBuster when booking opens every Saturday at 12:00 PM.
+A Telegram bot that automatically books fitness classes on WODBuster the moment the week opens, on Sunday at 12:00 (Europe/Madrid).
 
 ## ✨ **Features**
 
@@ -8,7 +8,7 @@ A Telegram bot that automatically books fitness classes on WODBuster when bookin
 - 📅 **Automated Booking**: Schedule classes to be booked automatically
 - ⚡ **Multi-User Support**: Each user gets their own browser session for parallel booking
 - 🍪 **Session Persistence**: Remembers your login using WODBuster session cookie
-- ⏰ **Saturday Cronjob**: Runs every Saturday at 11:55 AM, ready to book at 12:00 PM
+- ⏰ **Weekly run**: Wakes up ten minutes before the opening, logs in, syncs with the server's clock, and books the instant the week is published
 - 🧪 **Session Testing**: Verify your login status anytime
 - 📊 **Status Monitoring**: Track your scheduled classes and booking attempts
 
@@ -27,14 +27,14 @@ graph TB
     F --> H[MongoDB Storage]
     F --> I[Memory Storage]
     
-    G --> J[WODBuster Website<br/>chromedp]
+    G --> J[WODBuster<br/>login via chromedp,<br/>booking over HTTP]
     
     K[App Level] --> L[Bot]
     K --> M[SessionManager]
     K --> N[BookingScheduler]
     K --> O[Manager]
     
-    P[Saturday 11:55 Cronjob] --> E
+    P[Sunday 11:50 Cronjob] --> E
     E --> Q[Parallel User Booking<br/>Each with dedicated<br/>browser context]
 ```
 
@@ -53,6 +53,9 @@ pkg/
     ├── browserauth/        # Login via headless Chrome (chromedp)
     ├── race/               # Waiting and polling policy
     └── wodbustertest/      # A fake WodBuster, for tests that cannot wait a week
+
+internal/
+└── booking/                # The bot's side of pkg/wodbuster: credentials + classes -> a run
 
 cmd/
 ├── bot/                    # The Telegram bot
@@ -146,7 +149,8 @@ VERSION=1.0.0
 **Authentication:**
 - `/start` - Welcome message and instructions
 - `/login email password` - Login with your WODBuster credentials
-- `/test` - Test your current session
+- `/test` - Check that your stored credentials still log in
+- `/rehearse` - Resolve your classes against the published week, booking nothing
 
 **Booking:**
 - `/book day hour class-type` - Schedule a class for automatic booking
@@ -168,7 +172,7 @@ Bot: ✅ Login successful! Your session is ready.
 User: /book Monday 10:00 wod  
 Bot: ✅ Class scheduled successfully!
      📅 Monday 10:00 - wod
-     The bot will automatically book this class on Saturday at 12:00 PM.
+     The bot will book this class when the week opens, on Sunday at 12:00.
 
 User: /status
 Bot: 📊 Your Status
@@ -228,23 +232,30 @@ rehearsal must name a day the box has already published. Rehearsing on a Friday,
 Sunday, so the run polls, never sees it, and exits with `race: day never
 published`. That is correct behaviour, not a failure of the rehearsal.
 
-> **The two halves of this repo disagree about the opening day.** The bot's cron
-> is `55 11 * * 6` — Saturday 11:55 (`internal/telegram/usecase/scheduler.go:52`)
-> — while `wodbook` defaults to Sunday 12:00, following the design doc. One of
-> them is wrong about the real box, and whichever it is fires on a day when
-> nothing publishes. Set `opens` in the config to whatever your box actually
-> does, and see `todo.md`.
+> **Settled:** firespain publishes on **Sunday at 12:00** Europe/Madrid,
+> confirmed by live runs on 2026-09-20 and 2026-09-27. The bot and `wodbook`
+> now agree; the bot's opening lives in one place,
+> `usecase.DefaultOpening` (`internal/telegram/usecase/opening.go`).
 
 Full detail, including the exit codes and what a rehearsal still does not prove:
 [`pkg/wodbuster/README.md`](pkg/wodbuster/README.md).
 
-## ⏰ **How the Saturday Booking Works**
+## ⏰ **How the weekly run works**
 
-1. **11:55 AM**: Bot starts up and prepares all user sessions
-2. **11:55-12:00**: Bot navigates to class schedule pages and waits
-3. **12:00 PM**: Booking buttons become available
-4. **12:00-12:05**: Bot attempts to book all scheduled classes in parallel
-5. **Results**: Users are notified of success/failure via Telegram
+1. **Sunday 11:50** — the cronjob wakes up, ten minutes before the opening.
+2. One goroutine per athlete: each logs in with their own stored credentials
+   (a browser, 3–15s), then syncs with WodBuster's own clock.
+3. Each run reads the server's countdown and trusts it over the configured
+   time when the two disagree by more than two seconds.
+4. **12:00** — the chase: poll until the week appears, then book, retrying
+   anything that is not a flat "no" until the class fills up, then taking the
+   waiting list.
+5. Results arrive in Telegram, per athlete.
+
+Athletes do not slow each other down: WodBuster serialises booking calls per
+athlete, not globally. Within one athlete the client queues its own calls, which
+is what stops three classes from colliding with each other — see
+[`pkg/wodbuster/README.md`](pkg/wodbuster/README.md).
 
 ## 🧪 **Testing**
 

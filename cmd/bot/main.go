@@ -5,6 +5,10 @@ import (
 	"log"
 	"os"
 
+	// Zones baked into the binary: the opening is a wall-clock time in Madrid,
+	// and the alpine image the bot ships in has no tzdata.
+	_ "time/tzdata"
+
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/app"
 )
 

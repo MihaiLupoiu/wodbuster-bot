@@ -80,13 +80,36 @@ type Server struct {
 	// ServerSkew shifts the Date header, to test clock synchronisation.
 	serverSkew time.Duration
 
+	// delay holds every handler open for this long, widening the window in
+	// which two requests can overlap.
+	delay time.Duration
+
+	// allowConcurrentBookings lifts the one-at-a-time rule, for tests that
+	// want to isolate something else.
+	allowConcurrentBookings bool
+
+	// inFlight and maxInFlight record overlap per handler, which is how a test
+	// can tell "queued" from "happened to be fast".
+	inFlight    map[string]int
+	maxInFlight map[string]int
+
+	// booking holds the athlete ids with a booking operation in flight. The
+	// real server allows one per athlete and refuses the rest — see
+	// serveAction. Keyed by idu, so two athletes never block each other.
+	booking map[string]bool
+
 	srv *httptest.Server
 }
 
 // New starts a fake server that publishes immediately and shuts down with t.
 func New(t *testing.T) *Server {
 	t.Helper()
-	s := &Server{nextID: 40000}
+	s := &Server{
+		nextID:      40000,
+		inFlight:    map[string]int{},
+		maxInFlight: map[string]int{},
+		booking:     map[string]bool{},
+	}
 	s.srv = httptest.NewServer(s)
 	t.Cleanup(s.srv.Close)
 	return s
@@ -104,6 +127,14 @@ func (s *Server) Session() wodbuster.Session {
 		Cookies:   []*http.Cookie{{Name: "wb-test", Value: "1", Path: "/"}},
 		IssuedAt:  time.Now(),
 	}
+}
+
+// SessionFor is Session for a second athlete, so a test can put two of them on
+// the same server and watch them not collide.
+func (s *Server) SessionFor(athleteID string) wodbuster.Session {
+	sess := s.Session()
+	sess.AthleteID = athleteID
+	return sess
 }
 
 // Transport routes every request to this fake server regardless of host, so a
@@ -238,6 +269,31 @@ func (s *Server) Count(handler string) int {
 	return n
 }
 
+// Delay holds every handler open for d, so that requests a client sends
+// together actually overlap at the server.
+func (s *Server) Delay(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.delay = d
+}
+
+// AllowConcurrentBookings lifts the one-booking-per-athlete rule. The real
+// server does not allow this; use it only to isolate behaviour that would
+// otherwise be masked by the refusals.
+func (s *Server) AllowConcurrentBookings(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.allowConcurrentBookings = v
+}
+
+// MaxConcurrent is the highest number of calls to a handler that were in
+// flight at the same moment. One means the caller queued them.
+func (s *Server) MaxConcurrent(handler string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.maxInFlight[handler]
+}
+
 // BookedCount is how many places have been taken on a class.
 func (s *Server) BookedCount(id int64) int {
 	s.mu.Lock()
@@ -268,7 +324,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Handler: handler, ClassID: id, Ticks: ticks, Idu: q.Get("idu"), At: time.Now(),
 		UserAgent: r.Header.Get("User-Agent"), Cookies: r.Cookies(),
 	})
+	s.inFlight[handler]++
+	if s.inFlight[handler] > s.maxInFlight[handler] {
+		s.maxInFlight[handler] = s.inFlight[handler]
+	}
+	delay := s.delay
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.inFlight[handler]--
+		s.mu.Unlock()
+	}()
+	// Actions take their delay inside the athlete's lock — see serveAction —
+	// so that "in flight" means what a test needs it to mean.
+	if delay > 0 && !isAction(handler) {
+		time.Sleep(delay)
+	}
 
 	if expired {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -281,17 +352,74 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch handler {
 	case "LoadClass":
 		s.serveDay(w, ticks)
+	case "Calendario_Inscribir", "Calendario_Avisar", "Calendario_Borrar":
+		s.serveAction(w, handler, id, q.Get("idu"))
+	default:
+		// reservas.aspx and anything else: an empty 200 with a Date header,
+		// which is all ServerTime needs.
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, "<html><body>ok</body></html>")
+	}
+}
+
+// busyMsg is what WodBuster answers when an athlete already has a booking
+// operation in flight, verbatim from firespain on 2026-09-27.
+const busyMsg = "Estás usando la reserva de clases en otro sitio, " +
+	"espera que termine y vuelve a intentarlo"
+
+// serveAction enforces the rule that made a real opening interesting: one
+// booking operation per athlete at a time. A second one arriving while the
+// first is still running is refused outright — it does not queue, it does not
+// take the place, it just loses. The athlete id is the key, so two athletes
+// booking at the same moment do not see each other at all.
+func (s *Server) serveAction(w http.ResponseWriter, handler string, id int64, idu string) {
+	s.mu.Lock()
+	if s.allowConcurrentBookings {
+		d := s.delay
+		s.mu.Unlock()
+		if d > 0 {
+			time.Sleep(d)
+		}
+		s.dispatchAction(w, handler, id)
+		return
+	}
+	if s.booking[idu] {
+		s.mu.Unlock()
+		writeResult(w, false, busyMsg)
+		return
+	}
+	s.booking[idu] = true
+	delay := s.delay
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		delete(s.booking, idu)
+		s.mu.Unlock()
+	}()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+
+	s.dispatchAction(w, handler, id)
+}
+
+func isAction(handler string) bool {
+	switch handler {
+	case "Calendario_Inscribir", "Calendario_Avisar", "Calendario_Borrar":
+		return true
+	}
+	return false
+}
+
+func (s *Server) dispatchAction(w http.ResponseWriter, handler string, id int64) {
+	switch handler {
 	case "Calendario_Inscribir":
 		s.serveBook(w, id)
 	case "Calendario_Avisar":
 		writeResult(w, true, "")
 	case "Calendario_Borrar":
 		s.serveCancel(w, id)
-	default:
-		// reservas.aspx and anything else: an empty 200 with a Date header,
-		// which is all ServerTime needs.
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, "<html><body>ok</body></html>")
 	}
 }
 

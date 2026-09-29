@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -381,5 +382,171 @@ func TestUserAgent(t *testing.T) {
 	}
 	if got := srv.Requests()[1].UserAgent; got == "" || got == custom {
 		t.Errorf("default User-Agent = %q, want the library's own", got)
+	}
+}
+
+// WodBuster allows one booking operation per athlete at a time: a second one
+// arriving while the first is in flight is refused outright. Chasing three
+// classes at an opening therefore had the goals colliding with each other —
+// observed on 2026-09-27, two refusals and two wasted round trips out of three
+// bookings. The client queues them instead.
+func TestBookingsAreSerialisedPerAthlete(t *testing.T) {
+	srv := wodbustertest.New(t)
+	day := wodbuster.NewDate(2026, time.August, 24)
+	ids := []int64{
+		srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: day, Capacity: 12}),
+		srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "08:00", Date: day, Capacity: 12}),
+		srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "09:00", Date: day, Capacity: 12}),
+	}
+	srv.Delay(40 * time.Millisecond) // make overlap possible if it were allowed
+
+	c := newClient(t, srv)
+
+	var wg sync.WaitGroup
+	for _, id := range ids {
+		wg.Add(1)
+		go func(id int64) {
+			defer wg.Done()
+			if err := c.Book(context.Background(), wodbuster.ClassID(id), day); err != nil {
+				t.Errorf("Book(%d): %v", id, err)
+			}
+		}(id)
+	}
+	wg.Wait()
+
+	if got := srv.MaxConcurrent("Calendario_Inscribir"); got != 1 {
+		t.Errorf("concurrent bookings = %d, want 1", got)
+	}
+	for _, id := range ids {
+		if srv.BookedCount(id) != 1 {
+			t.Errorf("class %d booked = %d, want 1", id, srv.BookedCount(id))
+		}
+	}
+}
+
+// Only bookings queue. Reading the schedule is where the waiting would actually
+// cost something at an opening, and the server has no such limit on it.
+func TestScheduleReadsStayParallel(t *testing.T) {
+	srv := wodbustertest.New(t)
+	day := wodbuster.NewDate(2026, time.August, 24)
+	srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: day, Capacity: 12})
+	srv.Delay(40 * time.Millisecond)
+
+	c := newClient(t, srv)
+
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := c.Schedule(context.Background(), day); err != nil {
+				t.Errorf("Schedule: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := srv.MaxConcurrent("LoadClass"); got < 2 {
+		t.Errorf("concurrent schedule reads = %d, want at least 2", got)
+	}
+}
+
+// A caller that gives up while queued behind another booking must return, not
+// wait for a turn it no longer wants.
+func TestBookingRespectsCancellationWhileQueued(t *testing.T) {
+	srv := wodbustertest.New(t)
+	day := wodbuster.NewDate(2026, time.August, 24)
+	id := srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: day, Capacity: 12})
+	srv.Delay(300 * time.Millisecond)
+
+	c := newClient(t, srv)
+
+	go func() { _ = c.Book(context.Background(), wodbuster.ClassID(id), day) }()
+	time.Sleep(50 * time.Millisecond) // let the first one take the gate
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err := c.Book(ctx, wodbuster.ClassID(id), day)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Errorf("waited %s before giving up; it should leave as soon as the context does", elapsed)
+	}
+}
+
+func TestClassifyBusy(t *testing.T) {
+	srv := wodbustertest.New(t)
+	day := wodbuster.NewDate(2026, time.August, 24)
+	id := srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: day, Capacity: 12})
+	srv.RejectBookings("Estás usando la reserva de clases en otro sitio, espera que termine y vuelve a intentarlo")
+
+	c := newClient(t, srv)
+	err := c.Book(context.Background(), wodbuster.ClassID(id), day)
+	if !errors.Is(err, wodbuster.ErrBusy) {
+		t.Errorf("err = %v, want ErrBusy", err)
+	}
+}
+
+// The queue is per athlete, not global: it lives on the Client, and a Client is
+// built from one Session. Two athletes booking at the same instant never wait
+// for each other — on the real server their locks are keyed by athlete id, and
+// wodbustertest enforces the same rule.
+func TestTwoAthletesBookInParallel(t *testing.T) {
+	srv := wodbustertest.New(t)
+	day := wodbuster.NewDate(2026, time.August, 24)
+	id := srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: day, Capacity: 12})
+	srv.Delay(40 * time.Millisecond)
+
+	mine, err := wodbuster.NewClient(srv.Session(), wodbuster.WithHTTPClient(srv.HTTPClient()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	theirs, err := wodbuster.NewClient(srv.SessionFor("another-athlete"), wodbuster.WithHTTPClient(srv.HTTPClient()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	for _, c := range []*wodbuster.Client{mine, theirs} {
+		wg.Add(1)
+		go func(c *wodbuster.Client) {
+			defer wg.Done()
+			if err := c.Book(context.Background(), wodbuster.ClassID(id), day); err != nil {
+				t.Errorf("Book: %v", err)
+			}
+		}(c)
+	}
+	wg.Wait()
+
+	if got := srv.MaxConcurrent("Calendario_Inscribir"); got != 2 {
+		t.Errorf("concurrent bookings across athletes = %d, want 2", got)
+	}
+	if got := srv.BookedCount(id); got != 2 {
+		t.Errorf("booked = %d, want 2", got)
+	}
+}
+
+// The client can only queue what it knows about. A second process — or the site
+// open in a browser — holding the athlete's lock still produces ErrBusy, which
+// is precisely why the race layer keeps retrying it.
+func TestBusyWhenSomethingElseHoldsTheAthletesLock(t *testing.T) {
+	srv := wodbustertest.New(t)
+	day := wodbuster.NewDate(2026, time.August, 24)
+	id := srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: day, Capacity: 12})
+	srv.Delay(200 * time.Millisecond)
+
+	// Same athlete, separate client: a different process, as far as the server
+	// is concerned. It cannot share the other one's queue.
+	elsewhere := newClient(t, srv)
+	here := newClient(t, srv)
+
+	go func() { _ = elsewhere.Book(context.Background(), wodbuster.ClassID(id), day) }()
+	time.Sleep(50 * time.Millisecond)
+
+	err := here.Book(context.Background(), wodbuster.ClassID(id), day)
+	if !errors.Is(err, wodbuster.ErrBusy) {
+		t.Fatalf("err = %v, want ErrBusy", err)
 	}
 }

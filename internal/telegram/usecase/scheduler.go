@@ -4,14 +4,18 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	"github.com/robfig/cron/v3"
+
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/utils"
 )
 
-// BookingContext represents an active booking attempt
+// BookingContext is one athlete's run, while it is happening.
 type BookingContext struct {
 	ChatID      int64
 	BookingData models.BookingWindow
@@ -19,49 +23,68 @@ type BookingContext struct {
 	Status      string
 }
 
-// BookingScheduler handles Saturday cronjob and parallel booking
+// Notifier delivers a result back to the athlete. The bot implements it; a nil
+// Notifier is fine, and means the run only reaches the logs.
+type Notifier interface {
+	Notify(chatID int64, text string)
+}
+
+// BookingScheduler wakes up before the opening and books for everyone.
+//
+// One goroutine per athlete: WodBuster serialises booking calls per athlete,
+// not globally, so athletes do not slow each other down. Within an athlete,
+// the client queues its own calls — see pkg/wodbuster.
 type BookingScheduler struct {
 	storage           Storage
-	clientAPI         APIClient
+	booker            Booker
+	opening           Opening
+	encryptionKey     string
 	logger            *slog.Logger
 	cron              *cron.Cron
+	notifier          Notifier
 	activeBookings    map[int64]*BookingContext
 	activeBookingsMux sync.RWMutex
 	isRunning         bool
 }
 
-func NewBookingScheduler(storage Storage, clientAPI APIClient, logger *slog.Logger) *BookingScheduler {
+func NewBookingScheduler(storage Storage, booker Booker, opening Opening,
+	encryptionKey string, logger *slog.Logger) *BookingScheduler {
+
 	return &BookingScheduler{
 		storage:        storage,
-		clientAPI:      clientAPI,
+		booker:         booker,
+		opening:        opening,
+		encryptionKey:  encryptionKey,
 		logger:         logger,
-		cron:           cron.New(),
+		cron:           cron.New(cron.WithLocation(opening.Location)),
 		activeBookings: make(map[int64]*BookingContext),
 	}
 }
 
-// Start begins the Saturday 11:55 cronjob
+// SetNotifier wires up where results are delivered. Called once, at startup,
+// because the bot and the scheduler need each other.
+func (bs *BookingScheduler) SetNotifier(n Notifier) { bs.notifier = n }
+
+// Start schedules the weekly run, StartBefore ahead of the opening.
 func (bs *BookingScheduler) Start() error {
 	if bs.isRunning {
 		return fmt.Errorf("booking scheduler is already running")
 	}
 
-	// Schedule for every Saturday at 11:55 AM
-	// Cron format: "MIN HOUR DAY_OF_MONTH MONTH DAY_OF_WEEK"
-	// 55 11 * * 6 = 11:55 AM every Saturday (6 = Saturday)
-	_, err := bs.cron.AddFunc("55 11 * * 6", bs.processAllBookings)
-	if err != nil {
-		return fmt.Errorf("failed to schedule cronjob: %w", err)
+	spec := bs.opening.cronSpec()
+	if _, err := bs.cron.AddFunc(spec, bs.processAllBookings); err != nil {
+		return fmt.Errorf("failed to schedule cronjob %q: %w", spec, err)
 	}
 
 	bs.cron.Start()
 	bs.isRunning = true
-	bs.logger.Info("Booking scheduler started - will run every Saturday at 11:55 AM")
+	bs.logger.Info("booking scheduler started",
+		"cron", spec, "timezone", bs.opening.Location.String(),
+		"opening", bs.opening.Next(time.Now()).Format(time.RFC1123))
 
 	return nil
 }
 
-// Stop stops the booking scheduler
 func (bs *BookingScheduler) Stop() {
 	if !bs.isRunning {
 		return
@@ -70,232 +93,285 @@ func (bs *BookingScheduler) Stop() {
 	bs.cron.Stop()
 	bs.isRunning = false
 
-	// Cancel all active bookings
 	bs.activeBookingsMux.Lock()
-	for chatID, booking := range bs.activeBookings {
-		booking.Cancel()
-		bs.logger.Info("Cancelled active booking", "chat_id", chatID)
+	for chatID, b := range bs.activeBookings {
+		b.Cancel()
+		bs.logger.Info("cancelled active booking", "chat_id", chatID)
 	}
 	bs.activeBookings = make(map[int64]*BookingContext)
 	bs.activeBookingsMux.Unlock()
 
-	bs.logger.Info("Booking scheduler stopped")
+	bs.logger.Info("booking scheduler stopped")
 }
 
-// processAllBookings processes all pending bookings (called by cronjob)
+// processAllBookings is the weekly run: every athlete with pending classes,
+// each in their own goroutine, all of them waiting for the same opening.
 func (bs *BookingScheduler) processAllBookings() {
-	bs.logger.Info("🚀 Saturday 11:55 - Starting booking process for all users")
+	opensAt := bs.opening.Next(time.Now())
+	bs.logger.Info("booking run starting", "opens_at", opensAt.Format(time.RFC1123))
 
 	ctx := context.Background()
-
-	// Get all pending booking attempts
-	bookingAttempts, err := bs.storage.GetAllPendingBookings(ctx)
+	pending, err := bs.storage.GetAllPendingBookings(ctx)
 	if err != nil {
-		bs.logger.Error("Failed to get pending bookings", "error", err)
+		bs.logger.Error("could not read pending bookings", "error", err)
 		return
 	}
-
-	if len(bookingAttempts) == 0 {
-		bs.logger.Info("No pending bookings found")
+	byAthlete := groupByChat(pending)
+	if len(byAthlete) == 0 {
+		bs.logger.Info("nothing to book")
 		return
 	}
+	bs.logger.Info("booking for athletes", "athletes", len(byAthlete))
 
-	bs.logger.Info("Processing bookings", "count", len(bookingAttempts))
-
-	// Process each booking concurrently
 	var wg sync.WaitGroup
-	for _, attempt := range bookingAttempts {
+	for chatID, attempts := range byAthlete {
 		wg.Add(1)
-		go func(booking models.BookingAttempt) {
+		go func(chatID int64, attempts []models.BookingAttempt) {
 			defer wg.Done()
-			bs.processUserBooking(ctx, booking)
-		}(attempt)
+			bs.runForAthlete(ctx, chatID, attempts, RunSettings{OpensAt: opensAt})
+		}(chatID, attempts)
+	}
+	wg.Wait()
+	bs.logger.Info("booking run finished")
+}
+
+// RunSettings is what distinguishes the Sunday run from a rehearsal.
+type RunSettings struct {
+	OpensAt time.Time // zero means "now"
+	DryRun  bool
+}
+
+// runForAthlete books every pending class of one athlete in a single run, so
+// they share one login and one clock sync.
+func (bs *BookingScheduler) runForAthlete(ctx context.Context, chatID int64,
+	attempts []models.BookingAttempt, rs RunSettings) []booking.Outcome {
+
+	runCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+	defer cancel()
+
+	user, exists := bs.storage.GetUser(runCtx, chatID)
+	if !exists {
+		bs.logger.Error("athlete not found", "chat_id", chatID)
+		return nil
+	}
+	password, err := utils.DecryptPassword(user.Password, bs.encryptionKey)
+	if err != nil {
+		bs.fail(runCtx, chatID, attempts, fmt.Errorf("could not read the stored password: %w", err))
+		return nil
 	}
 
-	// Wait for all bookings to complete (or timeout)
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
+	targets := make([]booking.Target, 0, len(attempts))
+	for _, a := range attempts {
+		wd, err := utils.ParseWeekday(a.Day)
+		if err != nil {
+			bs.fail(runCtx, chatID, []models.BookingAttempt{a}, err)
+			continue
+		}
+		targets = append(targets, booking.Target{
+			Weekday: wd, Start: a.Hour, Class: a.ClassType, Waitlist: true,
+		})
+	}
+	if len(targets) == 0 {
+		return nil
+	}
 
-	// Wait up to 10 minutes for all bookings
-	select {
-	case <-done:
-		bs.logger.Info("All booking attempts completed")
-	case <-time.After(10 * time.Minute):
-		bs.logger.Warn("Booking timeout reached - some bookings may still be in progress")
+	bs.track(chatID, attempts[0], cancel)
+	defer bs.untrack(chatID)
+	for _, a := range attempts {
+		// A rehearsal's attempts are synthetic and have no id; there is
+		// nothing in storage to mark, and nothing happened to record.
+		if a.ID == "" {
+			continue
+		}
+		if err := bs.storage.UpdateBookingStatus(runCtx, a.ID, "active", ""); err != nil {
+			bs.logger.Error("could not mark the booking active", "booking_id", a.ID, "error", err)
+		}
+	}
+
+	outcomes, err := bs.booker.Run(runCtx, user.Email, password, targets,
+		booking.RunOptions{OpensAt: rs.OpensAt, DryRun: rs.DryRun})
+	if err != nil {
+		if rs.DryRun {
+			// The caller is standing in Telegram waiting for an answer; it
+			// reports this one itself rather than having it arrive twice.
+			bs.logger.Error("rehearsal failed", "chat_id", chatID, "error", err)
+			return nil
+		}
+		bs.fail(runCtx, chatID, attempts, err)
+		return nil
+	}
+
+	bs.record(runCtx, chatID, attempts, outcomes, !rs.DryRun)
+	return outcomes
+}
+
+// Rehearse runs an athlete's classes now, booking nothing. It is how you find
+// out on a Tuesday whether Sunday will work.
+func (bs *BookingScheduler) Rehearse(ctx context.Context, chatID int64) ([]booking.Outcome, error) {
+	schedules, ok := bs.storage.GetClassBookingSchedules(ctx, chatID)
+	if !ok || len(schedules) == 0 {
+		return nil, fmt.Errorf("no classes scheduled")
+	}
+	attempts := make([]models.BookingAttempt, 0, len(schedules))
+	for _, c := range schedules {
+		attempts = append(attempts, models.BookingAttempt{
+			ChatID: chatID, Day: c.Day, Hour: c.Hour, ClassType: c.ClassType,
+		})
+	}
+	out := bs.runForAthlete(ctx, chatID, attempts, RunSettings{DryRun: true})
+	if out == nil {
+		return nil, fmt.Errorf("the rehearsal did not get as far as the classes; check the logs")
+	}
+	return out, nil
+}
+
+func (bs *BookingScheduler) record(ctx context.Context, chatID int64,
+	attempts []models.BookingAttempt, outcomes []booking.Outcome, notify bool) {
+
+	var lines []string
+	for i, o := range outcomes {
+		status, msg := "success", ""
+		if !o.OK() {
+			status = "failed"
+			if o.Err != nil {
+				msg = o.Err.Error()
+			}
+		}
+		if i < len(attempts) && attempts[i].ID != "" {
+			if err := bs.storage.UpdateBookingStatus(ctx, attempts[i].ID, status, msg); err != nil {
+				bs.logger.Error("could not record the outcome", "booking_id", attempts[i].ID, "error", err)
+			}
+		}
+		lines = append(lines, formatOutcome(o))
+		bs.logger.Info("booking outcome", "chat_id", chatID,
+			"class", o.Class, "status", o.Status, "err", o.Err)
+	}
+	if notify {
+		bs.notify(chatID, "🏋️ Booking results\n\n"+strings.Join(lines, "\n"))
 	}
 }
 
-// processUserBooking processes booking for a single user
-func (bs *BookingScheduler) processUserBooking(ctx context.Context, booking models.BookingAttempt) {
-	// Create cancellable context for this booking
-	bookingCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
-	defer cancel()
+func (bs *BookingScheduler) fail(ctx context.Context, chatID int64,
+	attempts []models.BookingAttempt, err error) {
 
-	// Add random delay to avoid synchronized requests (800-1200ms)
-	delay := time.Duration(800+booking.ChatID%400) * time.Millisecond
-	bs.logger.Info("Starting booking with delay",
-		"chat_id", booking.ChatID,
-		"delay_ms", delay.Milliseconds(),
-		"class", fmt.Sprintf("%s %s %s", booking.Day, booking.Hour, booking.ClassType))
+	bs.logger.Error("booking run failed", "chat_id", chatID, "error", err)
+	for _, a := range attempts {
+		if a.ID == "" {
+			continue
+		}
+		if uerr := bs.storage.UpdateBookingStatus(ctx, a.ID, "failed", err.Error()); uerr != nil {
+			bs.logger.Error("could not record the failure", "booking_id", a.ID, "error", uerr)
+		}
+	}
+	bs.notify(chatID, "❌ Booking run failed: "+err.Error())
+}
 
-	time.Sleep(delay)
+func (bs *BookingScheduler) notify(chatID int64, text string) {
+	if bs.notifier == nil {
+		return
+	}
+	bs.notifier.Notify(chatID, text)
+}
 
-	// Track active booking
-	bookingContext := &BookingContext{
-		ChatID: booking.ChatID,
+func formatOutcome(o booking.Outcome) string {
+	switch o.Status {
+	case "booked":
+		return "✅ " + o.Class
+	case "already-booked":
+		return "✅ " + o.Class + " (already booked)"
+	case "waitlisted":
+		return "⏳ " + o.Class + " (waiting list)"
+	case "dry-run":
+		return "🧪 " + o.Class + " (rehearsal: found and bookable)"
+	default:
+		if o.Err != nil {
+			return "❌ " + o.Class + ": " + o.Err.Error()
+		}
+		return "❌ " + o.Class
+	}
+}
+
+func groupByChat(attempts []models.BookingAttempt) map[int64][]models.BookingAttempt {
+	out := map[int64][]models.BookingAttempt{}
+	for _, a := range attempts {
+		out[a.ChatID] = append(out[a.ChatID], a)
+	}
+	return out
+}
+
+func (bs *BookingScheduler) track(chatID int64, first models.BookingAttempt, cancel context.CancelFunc) {
+	bs.activeBookingsMux.Lock()
+	defer bs.activeBookingsMux.Unlock()
+	bs.activeBookings[chatID] = &BookingContext{
+		ChatID: chatID,
 		BookingData: models.BookingWindow{
-			Day:       booking.Day,
-			Hour:      booking.Hour,
-			ClassType: booking.ClassType,
-			OpensAt:   time.Now().Add(5 * time.Minute), // Opens at 12:00
+			Day: first.Day, Hour: first.Hour, ClassType: first.ClassType,
+			OpensAt: bs.opening.Next(time.Now()),
 		},
 		Cancel: cancel,
 		Status: "active",
 	}
-
-	bs.activeBookingsMux.Lock()
-	bs.activeBookings[booking.ChatID] = bookingContext
-	bs.activeBookingsMux.Unlock()
-
-	// Update booking status to active
-	if err := bs.storage.UpdateBookingStatus(bookingCtx, booking.ID, "active", ""); err != nil {
-		bs.logger.Error("Failed to update booking status", "booking_id", booking.ID, "error", err)
-	}
-
-	// Perform the booking using APIClient
-	err := bs.performBookingForUser(bookingCtx, booking.ChatID, bookingContext.BookingData)
-
-	// Update final status
-	status := "success"
-	errorMsg := ""
-	if err != nil {
-		status = "failed"
-		errorMsg = err.Error()
-		bs.logger.Error("Booking failed", "chat_id", booking.ChatID, "error", err)
-	} else {
-		bs.logger.Info("Booking successful", "chat_id", booking.ChatID)
-	}
-
-	// Update booking attempt in storage
-	if updateErr := bs.storage.UpdateBookingStatus(bookingCtx, booking.ID, status, errorMsg); updateErr != nil {
-		bs.logger.Error("Failed to update final booking status", "booking_id", booking.ID, "error", updateErr)
-	}
-
-	// Remove from active bookings
-	bs.activeBookingsMux.Lock()
-	delete(bs.activeBookings, booking.ChatID)
-	bs.activeBookingsMux.Unlock()
 }
 
-// GetActiveBookings returns currently active booking attempts
+func (bs *BookingScheduler) untrack(chatID int64) {
+	bs.activeBookingsMux.Lock()
+	defer bs.activeBookingsMux.Unlock()
+	delete(bs.activeBookings, chatID)
+}
+
+// GetActiveBookings returns a copy of the runs in flight.
 func (bs *BookingScheduler) GetActiveBookings() map[int64]*BookingContext {
 	bs.activeBookingsMux.RLock()
 	defer bs.activeBookingsMux.RUnlock()
 
-	// Return copy to avoid race conditions
-	result := make(map[int64]*BookingContext)
+	result := make(map[int64]*BookingContext, len(bs.activeBookings))
 	for k, v := range bs.activeBookings {
 		result[k] = v
 	}
 	return result
 }
 
-// CancelBooking cancels an active booking attempt
+// CancelBooking stops an athlete's run in flight.
 func (bs *BookingScheduler) CancelBooking(chatID int64) bool {
 	bs.activeBookingsMux.Lock()
 	defer bs.activeBookingsMux.Unlock()
 
-	if booking, exists := bs.activeBookings[chatID]; exists {
-		booking.Cancel()
-		booking.Status = "cancelled"
+	if b, exists := bs.activeBookings[chatID]; exists {
+		b.Cancel()
+		b.Status = "cancelled"
 		delete(bs.activeBookings, chatID)
-		bs.logger.Info("Cancelled booking", "chat_id", chatID)
+		bs.logger.Info("cancelled booking", "chat_id", chatID)
 		return true
 	}
 	return false
 }
 
-// IsRunning returns whether the scheduler is currently running
-func (bs *BookingScheduler) IsRunning() bool {
-	return bs.isRunning
-}
+func (bs *BookingScheduler) IsRunning() bool { return bs.isRunning }
 
-// GetNextRunTime returns when the scheduler will next run
+// GetNextRunTime is when the scheduler next wakes up.
 func (bs *BookingScheduler) GetNextRunTime() time.Time {
 	if !bs.isRunning {
 		return time.Time{}
 	}
-
 	entries := bs.cron.Entries()
 	if len(entries) == 0 {
 		return time.Time{}
 	}
-
 	return entries[0].Next
 }
 
-// GetScheduleInfo returns human-readable schedule information
+// GetScheduleInfo is the human-readable version, for /schedule.
 func (bs *BookingScheduler) GetScheduleInfo() string {
 	if !bs.isRunning {
 		return "Scheduler is not running"
 	}
-
+	opensAt := bs.opening.Next(time.Now())
 	nextRun := bs.GetNextRunTime()
 	if nextRun.IsZero() {
 		return "No scheduled runs found"
 	}
-
-	timeUntilNext := time.Until(nextRun)
-	return fmt.Sprintf("Next booking run: %s (in %s)",
-		nextRun.Format("Monday, January 2, 2006 at 15:04 MST"),
-		timeUntilNext.Round(time.Minute))
-}
-
-// performBookingForUser uses APIClient to perform booking for specific user
-func (bs *BookingScheduler) performBookingForUser(ctx context.Context, chatID int64, booking models.BookingWindow) error {
-	// Get user from storage
-	user, exists := bs.storage.GetUser(ctx, chatID)
-	if !exists {
-		return fmt.Errorf("user %d not found", chatID)
-	}
-
-	bs.logger.Info("Starting booking for user",
-		"chat_id", chatID,
-		"email", user.Email,
-		"day", booking.Day,
-		"hour", booking.Hour,
-		"class_type", booking.ClassType)
-
-	// Wait for booking window to open (12:00 PM)
-	if err := bs.waitForBookingWindow(ctx, booking); err != nil {
-		return fmt.Errorf("failed while waiting for booking window: %w", err)
-	}
-
-	// Use APIClient to perform booking - it will handle session management, login, etc.
-	return bs.clientAPI.BookClass(ctx, user.Email, "", booking.Day, booking.ClassType, booking.Hour)
-}
-
-// waitForBookingWindow waits until booking window opens at 12:00 PM
-func (bs *BookingScheduler) waitForBookingWindow(ctx context.Context, booking models.BookingWindow) error {
-	now := time.Now()
-	openTime := booking.OpensAt
-
-	if now.Before(openTime) {
-		waitDuration := openTime.Sub(now)
-		bs.logger.Info("Waiting for booking window to open",
-			"wait_duration", waitDuration,
-			"opens_at", openTime)
-
-		select {
-		case <-time.After(waitDuration):
-			bs.logger.Info("Booking window is now open!")
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-
-	return nil
+	return fmt.Sprintf("Classes open %s (in %s).\nThe bot wakes up at %s to be ready.",
+		opensAt.Format("Monday, January 2 at 15:04 MST"),
+		time.Until(opensAt).Round(time.Minute),
+		nextRun.Format("Monday, January 2 at 15:04 MST"))
 }

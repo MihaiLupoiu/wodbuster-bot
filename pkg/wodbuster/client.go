@@ -25,6 +25,19 @@ type Client struct {
 	session   Session
 	userAgent string
 	log       *slog.Logger
+
+	// booking serialises this athlete's Book / JoinWaitlist / Cancel calls.
+	//
+	// WodBuster allows one booking operation per athlete at a time: a second
+	// one arriving while the first is in flight is refused with "Estás usando
+	// la reserva de clases en otro sitio". Chasing three classes at an opening
+	// therefore has the goals colliding with each other, each collision costing
+	// a round trip and a retry. Queueing them here turns a guaranteed refusal
+	// into a short wait, and halves the requests the box's server sees.
+	//
+	// Reads are not affected: Schedule stays parallel, which is where the
+	// waiting actually matters.
+	booking chan struct{}
 }
 
 type config struct {
@@ -96,6 +109,7 @@ func NewClient(s Session, opts ...Option) (*Client, error) {
 		session:   s,
 		userAgent: cf.userAgent,
 		log:       cf.log,
+		booking:   make(chan struct{}, 1),
 	}, nil
 }
 
@@ -198,6 +212,15 @@ func (c *Client) Cancel(ctx context.Context, id ClassID, d Date) error {
 }
 
 func (c *Client) action(ctx context.Context, op, handler string, id ClassID, d Date) error {
+	// One booking operation per athlete, waiting our turn rather than being
+	// told to. A caller who cancels while queued leaves immediately.
+	select {
+	case c.booking <- struct{}{}:
+		defer func() { <-c.booking }()
+	case <-ctx.Done():
+		return fmt.Errorf("%s: %w", op, ctx.Err())
+	}
+
 	var raw wireAction
 	// connectionId is the SignalR channel for live updates; empty is fine.
 	path := fmt.Sprintf("/athlete/handlers/%s.ashx?id=%d&ticks=%d&idu=%s&connectionId=",

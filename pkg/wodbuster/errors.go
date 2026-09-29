@@ -15,6 +15,17 @@ var (
 	// on its own.
 	ErrSessionExpired = errors.New("wodbuster: session expired")
 
+	// ErrBusy is WodBuster refusing because another booking by the same athlete
+	// is still in flight: "Estás usando la reserva de clases en otro sitio,
+	// espera que termine y vuelve a intentarlo". It is the one refusal that
+	// promises nothing about the place itself — retry and you get in.
+	//
+	// Observed on 2026-09-27, when three goals booked at once and collided with
+	// each other. Client serialises its own booking calls now, so seeing this
+	// means somebody else is holding the athlete's lock: another process, or
+	// the website open in a browser.
+	ErrBusy = errors.New("wodbuster: another booking is in progress")
+
 	// ErrNotPublished means the box has not opened that day yet.
 	ErrNotPublished = errors.New("wodbuster: schedule not published yet")
 
@@ -62,6 +73,8 @@ func (e *APIError) Error() string {
 func classify(op, message string) error {
 	m := strings.ToLower(message)
 	switch {
+	case containsAny(m, "usando la reserva", "vuelve a intentarlo", "espera que termine"):
+		return fmt.Errorf("%s: %w (%s)", op, ErrBusy, message)
 	case containsAny(m, "completa", "llena", "sin plazas", "no hay plazas"):
 		return fmt.Errorf("%s: %w (%s)", op, ErrClassFull, message)
 	// "Ya estabas apuntado a esta clase." is what firespain answers to a second
