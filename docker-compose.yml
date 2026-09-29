@@ -1,39 +1,96 @@
+# Local development stack: MongoDB plus the bot.
+#
+#   cp .env.example .env     # then fill in TELEGRAM_BOT_TOKEN
+#   docker compose up --build
+#
+# Compose reads ./.env automatically for the ${...} values below; nothing has to
+# be exported. To use a different file:
+#
+#   docker compose --env-file .env.local up
+#
+# Note that --env-file *replaces* ./.env rather than adding to it, so the file
+# you pass must carry every variable, not just the ones you are overriding.
+#
+# Add `--profile tools` to also get mongo-express on http://localhost:8081.
+name: wodbuster-bot
+
 services:
+  mongodb:
+    image: mongo:8.0
+    restart: unless-stopped
+    ports:
+      # Bound to loopback: this database holds athletes' encrypted passwords.
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [wodbuster]
+
   bot:
     build:
       context: .
       dockerfile: Dockerfile
-    environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - STORAGE_TYPE=mongodb
-      - MONGO_URI=mongodb://mongodb:27017
-      - MONGO_DB=wodbuster
-      - APP_ENV=prod
-      - LOGGING_LEVEL=DEBUG
-      - WODBUSTER_URL=https://wodbuster.com
-      - ENCRYPTION_KEY=your-32-character-encryption-key-here
-      - HEALTH_CHECK_PORT=8080
-      - VERSION=1.0.0
-
+    # on-failure, not unless-stopped: the bot exits immediately on a bad token
+    # or a bad ENCRYPTION_KEY, and unless-stopped turns that into a hot loop
+    # hammering the Telegram API roughly once a second.
+    restart: on-failure:5
     depends_on:
-      - mongodb
-    ports:
-      - "8080:8080"
-    networks:
-      - bot-network
+      mongodb:
+        # Not `depends_on: [mongodb]` — that only waits for the container to
+        # start, and the bot dials Mongo immediately on boot.
+        condition: service_healthy
+    # The login drives a real Chrome. Docker's default 64 MB of /dev/shm is not
+    # enough for it, and the failure looks like a random crash mid-login.
+    shm_size: 512m
+    environment:
+      # Required. No default: a placeholder token fails at the first API call
+      # with a message that does not mention the token.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
 
-  mongodb:
-    image: mongo:latest
+      # AES-GCM: must be exactly 16, 24 or 32 bytes or every /login fails with
+      # "Failed to save login information".
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env (16, 24 or 32 bytes)}
+
+      STORAGE_TYPE: mongodb
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_DB: wodbuster
+
+      WODBUSTER_BOX: ${WODBUSTER_BOX:-firespain}
+      WODBUSTER_TIMEZONE: ${WODBUSTER_TIMEZONE:-Europe/Madrid}
+      # WODBUSTER_CHROME_PATH comes from the image; override only to test
+      # another browser build.
+
+      APP_ENV: dev
+      LOGGING_LEVEL: ${LOGGING_LEVEL:-DEBUG}
+      HEALTH_CHECK_PORT: "8080"
+      APP_VERSION: dev
     ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-    networks:
-      - bot-network
+      - "127.0.0.1:8080:8080"
+    networks: [wodbuster]
+
+  # Optional database browser: docker compose --profile tools up
+  mongo-express:
+    image: mongo-express:1.0.2
+    profiles: [tools]
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongodb:27017
+      ME_CONFIG_BASICAUTH: "false"
+    ports:
+      - "127.0.0.1:8081:8081"
+    networks: [wodbuster]
 
 volumes:
   mongodb_data:
 
 networks:
-  bot-network:
+  wodbuster:
     driver: bridge

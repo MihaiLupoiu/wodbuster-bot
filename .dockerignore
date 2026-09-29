@@ -1,0 +1,14 @@
+# Secrets and local state must never enter the build context: the Dockerfile
+# does `COPY . .`, so anything left here is baked into the builder layer.
+.env
+.env.*
+config.json
+diagnostics/
+
+# Not needed to build the binary.
+.git
+.github
+.aider*
+build/
+docs/
+*.md
