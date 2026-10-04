@@ -12,6 +12,11 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+// connectTimeout bounds the initial connection. Long enough for a hosted
+// cluster waking up, short enough that a misconfigured deployment says so
+// rather than hanging.
+const connectTimeout = 15 * time.Second
+
 type MongoStorage struct {
 	client             *mongo.Client
 	database           *mongo.Database
@@ -20,9 +25,25 @@ type MongoStorage struct {
 }
 
 func NewMongoStorage(uri, dbName string) (*MongoStorage, error) {
-	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(uri))
+	// mongo.Connect does not talk to the server: it validates the URI and
+	// returns. Against a container on the same network that hardly matters,
+	// but against a hosted database — wrong password, an IP that is not on the
+	// access list, a paused cluster — the bot would start up looking healthy
+	// and only fail hours later, mid-booking. So connect, then prove it.
+	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+	defer cancel()
+
+	client, err := mongo.Connect(ctx, options.Client().
+		ApplyURI(uri).
+		SetServerSelectionTimeout(connectTimeout))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to MongoDB: %w", err)
+	}
+	if err := client.Ping(ctx, nil); err != nil {
+		_ = client.Disconnect(context.Background())
+		return nil, fmt.Errorf("could not reach MongoDB: %w "+
+			"(check the credentials in MONGO_URI, and that this host's IP is "+
+			"allowed to connect)", err)
 	}
 
 	database := client.Database(dbName)
