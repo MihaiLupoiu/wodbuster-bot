@@ -5,6 +5,8 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # So that Release can run the same checks before publishing an image.
+  workflow_call:
 
 jobs:
   build:

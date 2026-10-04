@@ -1,4 +1,7 @@
-FROM golang:1.26-alpine AS builder
+# --platform=$BUILDPLATFORM keeps the Go toolchain on the runner's own
+# architecture and cross-compiles instead. Without it a linux/arm64 build on an
+# amd64 runner compiles the whole module under QEMU, which takes minutes.
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
 WORKDIR /app
 
@@ -6,7 +9,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN go build -o /app/bot ./cmd/bot
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+# CGO off: the result has to run on alpine, which has no glibc.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -o /app/bot ./cmd/bot
 
 # Pinned: an unpinned base means the browser under the bot can change without
 # anything in this repo changing.
@@ -28,6 +37,11 @@ RUN test -x "$WODBUSTER_CHROME_PATH"
 # Chrome is launched with --no-sandbox, so do not also hand it root.
 RUN adduser -D -u 10001 bot
 USER bot
+
+ARG VERSION=dev
+# Reported by the health endpoint and /status, so a running container can say
+# which release it is. Overridable at run time like any other setting.
+ENV APP_VERSION=${VERSION}
 
 WORKDIR /app
 COPY --from=builder /app/bot .

@@ -1,0 +1,163 @@
+name: Release
+
+# Cuts a semver tag from main and publishes the bot's image to Docker Hub.
+# Once this finishes:
+#
+#   docker pull <user>/wodbuster-bot:vX.Y.Z
+#
+# Triggered by `make release bump=patch|minor|major`, or from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yaml
+
+  release:
+    needs: [ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Refuse to release from a non-main ref
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Releases must be cut from main (got ${{ github.ref }})" >&2
+          exit 1
+
+      - name: Check the Docker Hub credentials are present
+        env:
+          USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          # Failing here costs nothing; failing after the tag is pushed leaves a
+          # version tagged with no image behind it.
+          missing=
+          [ -n "$USERNAME" ] || missing="$missing DOCKERHUB_USERNAME"
+          [ -n "$TOKEN" ] || missing="$missing DOCKERHUB_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing" >&2
+            echo "Add them under Settings > Secrets and variables > Actions." >&2
+            exit 1
+          fi
+
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          latest=${latest:-v0.0.0}
+          IFS=. read -r major minor patch <<< "${latest#v}"
+          case "$BUMP" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "::error::unknown bump $BUMP" >&2; exit 1 ;;
+          esac
+          next="v${major}.${minor}.${patch}"
+          echo "Latest: ${latest} -> next: ${next}"
+          {
+            echo "next=${next}"
+            echo "bare=${major}.${minor}.${patch}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the image name
+        id: image
+        env:
+          # A repository variable wins, so the image can live under an
+          # organisation that is not the pushing user.
+          IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+          USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: echo "name=${IMAGE:-$USERNAME/wodbuster-bot}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # The image is built and pushed before the tag exists. A failed build
+      # then leaves nothing behind; a tag with no image would need deleting by
+      # hand before the same version could be cut again.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.next }}
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ steps.version.outputs.next }}
+            ${{ steps.image.outputs.name }}:${{ steps.version.outputs.bare }}
+            ${{ steps.image.outputs.name }}:latest
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.next }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create and push tag
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEXT" -m "Release $NEXT"
+          git push origin "$NEXT"
+
+      - name: Create GitHub release
+        uses: actions/github-script@v7
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+          IMAGE: ${{ steps.image.outputs.name }}
+        with:
+          script: |
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: process.env.NEXT,
+              name: process.env.NEXT,
+              generate_release_notes: true,
+              body: `\`\`\`\ndocker pull ${process.env.IMAGE}:${process.env.NEXT}\n\`\`\`\n`,
+            });
+
+      - name: Summary
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          {
+            echo "### Released \`$NEXT\`"
+            echo
+            echo '```'
+            echo "docker pull $IMAGE:$NEXT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,4 +1,4 @@
-.PHONY: build build-wodbook test lint clean generate
+.PHONY: build build-wodbook test lint clean generate release
 
 # Variables
 BINARY_NAME=bot
@@ -38,11 +38,21 @@ clean: ## Clean the build directory
 	go clean
 	rm -rf $(BUILD_DIR)
 
-docker-build: ## Build the bot in a docker container
-	docker build -t github.com/MihaiLupoiu/wodbuster-bot .
+# Usage: make release bump=patch|minor|major   (BUMP= also works)
+#
+# Runs the Release workflow on main: CI, then a multi-arch image pushed to
+# Docker Hub, then the tag and the GitHub release. Nothing is tagged locally —
+# the version is computed from the tags already on origin.
+release: ## Cut a release and publish the image (bump=patch|minor|major, default patch)
+	@command -v gh >/dev/null || { echo "gh is not installed: https://cli.github.com"; exit 1; }
+	gh workflow run release.yml --ref main -f bump=$(or $(bump),$(BUMP),patch)
+	@echo "Follow it with: gh run watch \$$(gh run list --workflow=release.yml --limit 1 --json databaseId -q '.[0].databaseId')"
 
-docker-run: ## Run the bot in a docker container
-	docker run -e TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN} github.com/MihaiLupoiu/wodbuster-bot
+docker-build: ## Build the bot image locally (same Dockerfile the release uses)
+	docker build -t wodbuster-bot:dev .
+
+docker-run: ## Run the locally built image
+	docker run --rm -e TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN} wodbuster-bot:dev
 
 docker-compose-run: ## Run the bot and MongoDB using docker-compose
 	@if ! command -v docker-compose &> /dev/null; then \
