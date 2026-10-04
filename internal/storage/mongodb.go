@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 // connectTimeout bounds the initial connection. Long enough for a hosted
@@ -41,7 +41,9 @@ func NewMongoStorageWithMetrics(uri, dbName string, m *MongoMetrics) (*MongoStor
 	defer cancel()
 
 	poolMonitor, cmdMonitor := m.Monitors()
-	client, err := mongo.Connect(ctx, options.Client().
+	// v2's Connect takes no context: it does no I/O, which is exactly the
+	// surprise the Ping below exists to cover.
+	client, err := mongo.Connect(options.Client().
 		ApplyURI(uri).
 		SetServerSelectionTimeout(connectTimeout).
 		SetPoolMonitor(poolMonitor).

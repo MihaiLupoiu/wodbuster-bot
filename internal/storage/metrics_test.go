@@ -8,7 +8,7 @@ import (
 	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
-	"go.mongodb.org/mongo-driver/event"
+	"go.mongodb.org/mongo-driver/v2/event"
 )
 
 // The driver reports every command through these monitors, which is why there

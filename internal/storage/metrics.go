@@ -6,7 +6,7 @@ import (
 
 	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"go.mongodb.org/mongo-driver/event"
+	"go.mongodb.org/mongo-driver/v2/event"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/platform/metrics"
 )
