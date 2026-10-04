@@ -24,7 +24,14 @@ type MongoStorage struct {
 	bookingsCollection *mongo.Collection
 }
 
+// NewMongoStorage connects without metrics. Prefer NewMongoStorageWithMetrics.
 func NewMongoStorage(uri, dbName string) (*MongoStorage, error) {
+	return NewMongoStorageWithMetrics(uri, dbName, nil)
+}
+
+// NewMongoStorageWithMetrics connects and instruments the driver through its
+// own event monitors, so every command is counted without wrapping any call.
+func NewMongoStorageWithMetrics(uri, dbName string, m *MongoMetrics) (*MongoStorage, error) {
 	// mongo.Connect does not talk to the server: it validates the URI and
 	// returns. Against a container on the same network that hardly matters,
 	// but against a hosted database — wrong password, an IP that is not on the
@@ -33,9 +40,12 @@ func NewMongoStorage(uri, dbName string) (*MongoStorage, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
 
+	poolMonitor, cmdMonitor := m.Monitors()
 	client, err := mongo.Connect(ctx, options.Client().
 		ApplyURI(uri).
-		SetServerSelectionTimeout(connectTimeout))
+		SetServerSelectionTimeout(connectTimeout).
+		SetPoolMonitor(poolMonitor).
+		SetMonitor(cmdMonitor))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to MongoDB: %w", err)
 	}

@@ -190,6 +190,7 @@ type Authenticator struct {
 	trustDevice    bool
 	diagnosticsDir string
 	userAgent      string
+	onDrift        func(control, via string)
 	timeout        time.Duration
 	log            *slog.Logger
 }
@@ -225,6 +226,15 @@ func WithUserAgent(ua string) Option {
 func WithTimeout(d time.Duration) Option { return func(a *Authenticator) { a.timeout = d } }
 
 func WithLogger(l *slog.Logger) Option { return func(a *Authenticator) { a.log = l } }
+
+// WithDriftObserver is called whenever a control is found by something other
+// than its known id — "email" by shape, the device choice by value or label.
+// Every such call is WodBuster having moved something under us, which is worth
+// a metric rather than a log line nobody reads: the ids have changed once
+// already, and the next time should be noticed before an opening, not during.
+func WithDriftObserver(f func(control, via string)) Option {
+	return func(a *Authenticator) { a.onDrift = f }
+}
 
 func New(opts ...Option) *Authenticator {
 	a := &Authenticator{
@@ -312,6 +322,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 		if via[f] != "id" {
 			a.log.Warn("login control no longer has its usual id; found it by shape",
 				"field", f, "via", via[f])
+			a.drift(f, via[f])
 		}
 	}
 
@@ -376,6 +387,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 			default:
 				a.log.Warn("device control id is gone; found it another way",
 					"id", deviceID, "via", via)
+				a.drift("device", via)
 			}
 		} else {
 			a.log.Debug("waiting for the login to land", "url", href)
@@ -434,6 +446,12 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 	}
 	a.log.Info("authenticated", "box", box, "cookies", len(sess.Cookies))
 	return sess, nil
+}
+
+func (a *Authenticator) drift(control, via string) {
+	if a.onDrift != nil {
+		a.onDrift(control, via)
+	}
 }
 
 // toHTTPCookies keeps every cookie for wodbuster.com and the box subdomain.
