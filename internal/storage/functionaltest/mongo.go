@@ -7,8 +7,8 @@ import (
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 type MongoDBContainer struct {
@@ -44,7 +44,7 @@ func CreateMongoContainer(ctx context.Context, t *testing.T, dbName string) (*mo
 
 	uri := fmt.Sprintf("mongodb://%s:%s", host, mappedPort.Port())
 
-	mongoClient, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+	mongoClient, err := mongo.Connect(options.Client().ApplyURI(uri))
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to connect to mongodb: %v", err)
 	}
