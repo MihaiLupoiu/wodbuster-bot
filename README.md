@@ -257,6 +257,43 @@ athlete, not globally. Within one athlete the client queues its own calls, which
 is what stops three classes from colliding with each other — see
 [`pkg/wodbuster/README.md`](pkg/wodbuster/README.md).
 
+## 📦 **Releasing**
+
+```bash
+make release bump=patch     # or minor, major; defaults to patch
+```
+
+That dispatches the `Release` workflow on `main`. It runs CI, then builds the
+image for `linux/amd64` and `linux/arm64` and pushes it to Docker Hub, then
+tags the commit and opens a GitHub release. The version is computed from the
+tags already on `origin`, so nothing is tagged locally and two people cannot
+pick the same number.
+
+The image is pushed **before** the tag is created: a failed build leaves
+nothing behind, whereas a tag with no image behind it has to be deleted by hand
+before that version can be cut again.
+
+Each release publishes three tags — `vX.Y.Z`, `X.Y.Z` and `latest` — and bakes
+the version into `APP_VERSION`, so a running container can say which release it
+is.
+
+**One-time setup.** Under *Settings → Secrets and variables → Actions*:
+
+| Name | Kind | Purpose |
+|---|---|---|
+| `DOCKERHUB_USERNAME` | secret | Docker Hub account |
+| `DOCKERHUB_TOKEN` | secret | Docker Hub **access token**, not the password |
+| `DOCKERHUB_IMAGE` | variable (optional) | Full image name; defaults to `<username>/wodbuster-bot` |
+
+The workflow checks both secrets exist before it does anything else, so a
+missing one fails in seconds rather than after the build.
+
+**Running a release:**
+
+```bash
+WODBUSTER_IMAGE=<user>/wodbuster-bot:v1.2.3 docker compose up --no-build
+```
+
 ## 🧪 **Testing**
 
 ### Run Unit Tests

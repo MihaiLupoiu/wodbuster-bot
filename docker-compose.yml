@@ -32,6 +32,12 @@ services:
     networks: [wodbuster]
 
   bot:
+    # Built locally by default. To run a published release instead:
+    #
+    #   WODBUSTER_IMAGE=<user>/wodbuster-bot:v1.2.3 docker compose up --no-build
+    #
+    # (--no-build, or compose rebuilds over the tag it just pulled.)
+    image: ${WODBUSTER_IMAGE:-wodbuster-bot:dev}
     build:
       context: .
       dockerfile: Dockerfile
