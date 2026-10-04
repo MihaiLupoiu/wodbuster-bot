@@ -294,6 +294,44 @@ missing one fails in seconds rather than after the build.
 WODBUSTER_IMAGE=<user>/wodbuster-bot:v1.2.3 docker compose up --no-build
 ```
 
+## 📈 **Metrics**
+
+Prometheus metrics are served at `/metrics` on the health port (8080), next to
+`/health`, so the process keeps a single listener.
+
+```
+wodbuster_bot_commands_total{command="book"} 3
+wodbuster_bot_commands_total{command="(others)"} 1
+```
+
+The shape follows `buying-engine-service`: one explicit registry rather than the
+default one, collectors built with `promauto.With(reg)`, and `Observe*` methods
+on a struct that callers hold. Nothing reads a package-level global, so a test
+builds its own registry and asserts on it.
+
+So far there is exactly one metric, a counter per bot command, plus the Go
+runtime and process collectors. [`docs/monitoring.md`](docs/monitoring.md) is
+the shortlist of what to add next, ordered by what has actually broken. Adding a metric means adding a field to
+`metrics.Metrics` and an `Observe*` method beside it
+([`internal/metrics/metrics.go`](internal/metrics/metrics.go)).
+
+**On label cardinality.** The `command` label comes from a Telegram message,
+which means anyone can invent values, and every distinct value is a series
+Prometheus keeps. Only the commands the bot implements get their own series;
+anything else is bucketed under `(others)`, and a message that is not a command
+at all counts as `(none)`. This mirrors the `(others)` bucketing in
+buying-engine-service. Any future label taken from user input needs the same
+treatment.
+
+Scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: wodbuster-bot
+    static_configs:
+      - targets: ['wodbuster-bot:8080']
+```
+
 ## 🧪 **Testing**
 
 ### Run Unit Tests

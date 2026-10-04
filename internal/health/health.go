@@ -28,6 +28,7 @@ type Checker struct {
 	storage   usecase.Storage
 	logger    *slog.Logger
 	startTime time.Time
+	metrics   http.Handler
 	version   string
 }
 
@@ -114,14 +115,32 @@ func (c *Checker) checkSystem() Health {
 	}
 }
 
-func (c *Checker) StartServer(addr string) error {
+// WithMetrics adds /metrics to the health server, so the process keeps a single
+// listener. Takes the handler the platform package exposes.
+func (c *Checker) WithMetrics(h http.Handler) *Checker {
+	c.metrics = h
+	return c
+}
+
+// Mux is everything this server exposes. Separate from StartServer so a test
+// can exercise the routes without binding a port.
+func (c *Checker) Mux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", c.Handler())
 	mux.HandleFunc("/health/ready", c.readinessHandler())
 	mux.HandleFunc("/health/live", c.livenessHandler())
+	if c.metrics != nil {
+		mux.Handle("/metrics", c.metrics)
+	}
+	return mux
+}
 
+func (c *Checker) StartServer(addr string) error {
+	if c.metrics != nil {
+		c.logger.Info("serving Prometheus metrics", "path", "/metrics")
+	}
 	c.logger.Info("Starting health check server", "address", addr)
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, c.Mux())
 }
 
 func (c *Checker) readinessHandler() http.HandlerFunc {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/health"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/platform/metrics"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/usecase"
@@ -89,17 +90,23 @@ func New(config *Config) (*App, error) {
 		logger,
 	)
 
+	// One registry for the process, configured in platform and served at
+	// /metrics by the health server. Each package registers its own metrics
+	// against it — see telegram.NewMetrics below.
+	promMetrics := metrics.NewPrometheus()
+
 	// Initialize Telegram bot
 	bot, err := telegram.New(config.TelegramToken, manager, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Telegram bot: %w", err)
 	}
+	bot = bot.WithMetrics(telegram.NewMetrics(promMetrics.Registry()))
 
 	// Results of the Sunday run go back to the athlete who asked for them.
 	bookingScheduler.SetNotifier(bot)
 
 	// Create health checker
-	healthChecker := health.NewChecker(store, logger, config.Version)
+	healthChecker := health.NewChecker(store, logger, config.Version).WithMetrics(promMetrics.Handler)
 
 	return &App{
 		bot:              bot,

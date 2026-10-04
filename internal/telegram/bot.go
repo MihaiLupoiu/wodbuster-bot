@@ -32,11 +32,19 @@ type Bot struct {
 	api          *tgbotapi.BotAPI
 	logger       *slog.Logger
 	manager      BotManager
+	metrics      *Metrics
 	loginHandler *handlers.LoginHandler
 	bookHandler  *handlers.BookingHandler
 	rateLimiter  *utils.RateLimiter
 	stopChan     chan struct{}
 	// removeHandler *handlers.RemoveHandler
+}
+
+// WithMetrics counts received commands. Optional: without it the bot runs
+// exactly as before, counting nothing.
+func (b *Bot) WithMetrics(m *Metrics) *Bot {
+	b.metrics = m
+	return b
 }
 
 func New(token string, manager BotManager, logger *slog.Logger) (*Bot, error) {
@@ -121,6 +129,8 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 	chatID := update.Message.Chat.ID
 	command := update.Message.Command()
 	started := time.Now()
+
+	b.metrics.ObserveCommand(command)
 
 	// Every message the bot receives, with its arguments redacted when they
 	// could be a password. Logging the raw text would put credentials in the
