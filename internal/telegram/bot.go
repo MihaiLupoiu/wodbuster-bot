@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
@@ -117,12 +118,32 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 		return
 	}
 
+	chatID := update.Message.Chat.ID
+	command := update.Message.Command()
+	started := time.Now()
+
+	// Every message the bot receives, with its arguments redacted when they
+	// could be a password. Logging the raw text would put credentials in the
+	// container logs, which is the one thing this bot must never do.
+	b.logger.Info("message received",
+		"chat_id", chatID,
+		"user", update.Message.From.UserName,
+		"command", command,
+		"args", redactArgs(command, update.Message.CommandArguments()))
+
 	// Check rate limit
-	if !b.rateLimiter.Allow(update.Message.Chat.ID) {
-		b.sendMessage(update.Message.Chat.ID,
+	if !b.rateLimiter.Allow(chatID) {
+		b.logger.Warn("rate limited", "chat_id", chatID, "command", command)
+		b.sendMessage(chatID,
 			"You're sending commands too quickly. Please wait a moment before trying again.")
 		return
 	}
+
+	defer func() {
+		b.logger.Info("message handled",
+			"chat_id", chatID, "command", command,
+			"took", time.Since(started).Round(time.Millisecond))
+	}()
 
 	switch update.Message.Command() {
 	case "start":
@@ -296,6 +317,39 @@ func (b *Bot) sendMessage(chatID int64, text string) {
 	msg.ParseMode = tgbotapi.ModeMarkdown
 
 	if _, err := b.api.Send(msg); err != nil {
-		b.logger.Error("Failed to send message", "error", err, "chat_id", chatID)
+		b.logger.Error("could not send message", "error", err, "chat_id", chatID,
+			"text", firstLine(text))
+		return
 	}
+	b.logger.Debug("message sent", "chat_id", chatID, "chars", len(text), "text", firstLine(text))
+}
+
+// redactArgs keeps credentials out of the logs. /login carries an email and a
+// password; everything else carries a day and a class name.
+func redactArgs(command, args string) string {
+	if args == "" {
+		return ""
+	}
+	switch command {
+	case "login":
+		fields := strings.Fields(args)
+		if len(fields) > 0 {
+			return fields[0] + " <redacted>"
+		}
+		return "<redacted>"
+	default:
+		return args
+	}
+}
+
+// firstLine keeps a reply recognisable in the logs without reproducing the
+// whole thing, which for /status or a results message is a screenful.
+func firstLine(text string) string {
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		text = text[:i]
+	}
+	if len(text) > 80 {
+		return text[:80] + "..."
+	}
+	return text
 }

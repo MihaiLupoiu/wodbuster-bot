@@ -82,6 +82,17 @@ func (bs *BookingScheduler) Start() error {
 		"cron", spec, "timezone", bs.opening.Location.String(),
 		"opening", bs.opening.Next(time.Now()).Format(time.RFC1123))
 
+	// Starting up inside the window means the cron for it has already been and
+	// gone — the container was down, restarted, or its host was suspended past
+	// the hour. The week is open and the places are going; chase them now
+	// rather than next Sunday. Anything already booked comes back as
+	// already-booked, so a restart during the window is harmless.
+	if bs.opening.InWindow(time.Now()) {
+		bs.logger.Info("starting inside the booking window; running now",
+			"opened_at", bs.opening.Target(time.Now()).Format(time.RFC1123))
+		go bs.processAllBookings()
+	}
+
 	return nil
 }
 
@@ -107,8 +118,11 @@ func (bs *BookingScheduler) Stop() {
 // processAllBookings is the weekly run: every athlete with pending classes,
 // each in their own goroutine, all of them waiting for the same opening.
 func (bs *BookingScheduler) processAllBookings() {
-	opensAt := bs.opening.Next(time.Now())
-	bs.logger.Info("booking run starting", "opens_at", opensAt.Format(time.RFC1123))
+	now := time.Now()
+	opensAt := bs.opening.Target(now)
+	bs.logger.Info("booking run starting",
+		"opens_at", opensAt.Format(time.RFC1123),
+		"already_open", opensAt.Before(now))
 
 	ctx := context.Background()
 	pending, err := bs.storage.GetAllPendingBookings(ctx)
@@ -137,8 +151,11 @@ func (bs *BookingScheduler) processAllBookings() {
 
 // RunSettings is what distinguishes the Sunday run from a rehearsal.
 type RunSettings struct {
-	OpensAt time.Time // zero means "now"
+	OpensAt time.Time // zero, or past, means "now"
 	DryRun  bool
+
+	// GiveUpAfter bounds the chase. Zero leaves the library's default.
+	GiveUpAfter time.Duration
 }
 
 // runForAthlete books every pending class of one athlete in a single run, so
@@ -146,7 +163,13 @@ type RunSettings struct {
 func (bs *BookingScheduler) runForAthlete(ctx context.Context, chatID int64,
 	attempts []models.BookingAttempt, rs RunSettings) []booking.Outcome {
 
-	runCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+	// Long enough to log in, wait out whatever head start is left, and chase;
+	// not so long that a wrong opening sits here for twenty minutes.
+	budget := 10*time.Minute + time.Until(rs.OpensAt)
+	if budget < 10*time.Minute {
+		budget = 10 * time.Minute
+	}
+	runCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 
 	user, exists := bs.storage.GetUser(runCtx, chatID)
@@ -160,13 +183,18 @@ func (bs *BookingScheduler) runForAthlete(ctx context.Context, chatID int64,
 		return nil
 	}
 
-	targets := make([]booking.Target, 0, len(attempts))
+	// planned keeps attempts and targets in step. They used to be two slices
+	// zipped by index, which quietly misaligned as soon as one day name failed
+	// to parse and recorded an outcome against the wrong booking.
+	var planned []models.BookingAttempt
+	var targets []booking.Target
 	for _, a := range attempts {
 		wd, err := utils.ParseWeekday(a.Day)
 		if err != nil {
 			bs.fail(runCtx, chatID, []models.BookingAttempt{a}, err)
 			continue
 		}
+		planned = append(planned, a)
 		targets = append(targets, booking.Target{
 			Weekday: wd, Start: a.Hour, Class: a.ClassType, Waitlist: true,
 		})
@@ -174,6 +202,7 @@ func (bs *BookingScheduler) runForAthlete(ctx context.Context, chatID int64,
 	if len(targets) == 0 {
 		return nil
 	}
+	attempts = planned
 
 	bs.track(chatID, attempts[0], cancel)
 	defer bs.untrack(chatID)
@@ -189,7 +218,11 @@ func (bs *BookingScheduler) runForAthlete(ctx context.Context, chatID int64,
 	}
 
 	outcomes, err := bs.booker.Run(runCtx, user.Email, password, targets,
-		booking.RunOptions{OpensAt: rs.OpensAt, DryRun: rs.DryRun})
+		booking.RunOptions{
+			OpensAt:     rs.OpensAt,
+			DryRun:      rs.DryRun,
+			GiveUpAfter: rs.GiveUpAfter,
+		})
 	if err != nil {
 		if rs.DryRun {
 			// The caller is standing in Telegram waiting for an answer; it
@@ -218,7 +251,8 @@ func (bs *BookingScheduler) Rehearse(ctx context.Context, chatID int64) ([]booki
 			ChatID: chatID, Day: c.Day, Hour: c.Hour, ClassType: c.ClassType,
 		})
 	}
-	out := bs.runForAthlete(ctx, chatID, attempts, RunSettings{DryRun: true})
+	out := bs.runForAthlete(ctx, chatID, attempts,
+		RunSettings{DryRun: true, GiveUpAfter: 5 * time.Second})
 	if out == nil {
 		return nil, fmt.Errorf("the rehearsal did not get as far as the classes; check the logs")
 	}
@@ -227,6 +261,9 @@ func (bs *BookingScheduler) Rehearse(ctx context.Context, chatID int64) ([]booki
 
 func (bs *BookingScheduler) record(ctx context.Context, chatID int64,
 	attempts []models.BookingAttempt, outcomes []booking.Outcome, notify bool) {
+
+	ctx, cancel := recordingContext(ctx)
+	defer cancel()
 
 	var lines []string
 	for i, o := range outcomes {
@@ -254,6 +291,11 @@ func (bs *BookingScheduler) record(ctx context.Context, chatID int64,
 func (bs *BookingScheduler) fail(ctx context.Context, chatID int64,
 	attempts []models.BookingAttempt, err error) {
 
+	// Detached on purpose: the usual reason a run fails is that its context
+	// expired, and reusing it here means the failure cannot be written down.
+	ctx, cancel := recordingContext(ctx)
+	defer cancel()
+
 	bs.logger.Error("booking run failed", "chat_id", chatID, "error", err)
 	for _, a := range attempts {
 		if a.ID == "" {
@@ -264,6 +306,12 @@ func (bs *BookingScheduler) fail(ctx context.Context, chatID int64,
 		}
 	}
 	bs.notify(chatID, "❌ Booking run failed: "+err.Error())
+}
+
+// recordingContext detaches from a context that may already be done, so that
+// results and failures still reach storage.
+func recordingContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 }
 
 func (bs *BookingScheduler) notify(chatID int64, text string) {

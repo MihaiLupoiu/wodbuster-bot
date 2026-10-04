@@ -1,6 +1,9 @@
 package booking_test
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -42,4 +45,21 @@ func TestNextOpening(t *testing.T) {
 
 	_, err = booking.NextOpening(time.Now(), time.Sunday, "25:00", madrid)
 	assert.Error(t, err)
+}
+
+// A run must refuse an opening that is days away rather than sit on it until
+// somebody else's timeout fires. On 2026-10-04 a late run computed the next
+// Sunday, waited, and was killed twenty minutes later by its own context —
+// reported to the user as "context deadline exceeded", which says nothing.
+func TestRunRefusesAnImplausibleWait(t *testing.T) {
+	svc := booking.New("firespain", time.UTC, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	_, err := svc.Run(context.Background(), "a@b.c", "pw",
+		[]booking.Target{{Weekday: time.Monday, Start: "07:00", Class: "Wod"}},
+		booking.RunOptions{OpensAt: time.Now().Add(7 * 24 * time.Hour)})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing to wait")
+	assert.Contains(t, err.Error(), "computed the wrong opening",
+		"the message must point at the cause, not just the symptom")
 }

@@ -21,6 +21,16 @@ type Opening struct {
 	// browser, 5-15s) and sync the clock, short enough that the session is
 	// still fresh when the race starts.
 	StartBefore time.Duration
+
+	// Grace is how long after an opening the week is still worth chasing.
+	//
+	// A run that starts late must book the week that just opened, not wait a
+	// further seven days for the next one. Waking up late is not rare: a cron
+	// fires late when the host suspends, a container restarts mid-window, a
+	// deploy lands at the wrong minute. Places are usually still there
+	// minutes later, and when they are not the answer is "full", which is
+	// information. Waiting a week is never the right answer.
+	Grace time.Duration
 }
 
 func DefaultOpening(loc *time.Location) Opening {
@@ -32,6 +42,7 @@ func DefaultOpening(loc *time.Location) Opening {
 		Time:        "12:00",
 		Location:    loc,
 		StartBefore: 10 * time.Minute,
+		Grace:       2 * time.Hour,
 	}
 }
 
@@ -42,6 +53,28 @@ func (o Opening) Next(now time.Time) time.Time {
 		return now
 	}
 	return at
+}
+
+// Target is the opening a run starting now is for.
+//
+// Not the same question as Next, and the difference cost a week: Next is
+// strictly in the future, so a run that began even one second after noon
+// targeted the following Sunday, waited for it, and died on its own timeout.
+// Target gives the opening that has just passed while it is still within
+// Grace — a time in the past, which makes the chase start immediately.
+func (o Opening) Target(now time.Time) time.Time {
+	next := o.Next(now)
+	previous := next.AddDate(0, 0, -7)
+	if now.Sub(previous) <= o.Grace {
+		return previous
+	}
+	return next
+}
+
+// InWindow says whether a run starting now would be chasing the week that is
+// already open. Used on startup, when a container may have missed its cron.
+func (o Opening) InWindow(now time.Time) bool {
+	return o.Target(now).Before(now)
 }
 
 // cronSpec fires StartBefore ahead of the opening, in the opening's own zone.

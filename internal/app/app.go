@@ -41,9 +41,16 @@ func Initialize(envFile string) (*App, error) {
 }
 
 func New(config *Config) (*App, error) {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	// The configured level, not a hardcoded one: LOGGING_LEVEL defaults to
+	// DEBUG and was being ignored here, which is why the library's own request
+	// logging never appeared.
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: config.LoggerLevel,
+		}))
+	}
+	logger.Info("log level", "level", config.LoggerLevel.String())
 
 	// Initialize storage
 	var store usecase.Storage

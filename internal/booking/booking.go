@@ -89,13 +89,29 @@ func (s *Service) authenticate(ctx context.Context, email, password string) (wod
 
 // RunOptions says when to act and whether to touch anything.
 type RunOptions struct {
-	// OpensAt is the moment the week is published. Zero means "act now",
-	// which is what a rehearsal wants.
+	// OpensAt is the moment the week is published. Zero, or any time already
+	// past, means "act now" — which is what a rehearsal wants, and what a run
+	// that woke up late needs.
 	OpensAt time.Time
 
 	// DryRun resolves every target and books nothing.
 	DryRun bool
+
+	// GiveUpAfter bounds the chase once it starts. Zero takes the race
+	// package's default of 90s, which is right for a real opening and far too
+	// patient for a rehearsal.
+	GiveUpAfter time.Duration
+
+	// MaxWait refuses to wait longer than this for an opening. Zero takes the
+	// default below. It exists because the alternative to a loud refusal is a
+	// run that sits waiting for a date days away and dies on somebody else's
+	// timeout, which is exactly what happened on 2026-10-04.
+	MaxWait time.Duration
 }
+
+// defaultMaxWait is comfortably longer than any sane head start and far
+// shorter than a week.
+const defaultMaxWait = time.Hour
 
 // Run books one athlete's targets. It is the same sequence cmd/wodbook runs,
 // which is deliberate: that binary is where the sequence gets proven.
@@ -104,10 +120,30 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 		return nil, nil
 	}
 
+	// Before the browser, not after: an opening days away is a programming
+	// error, and finding that out should not cost a login first.
+	maxWait := o.MaxWait
+	if maxWait <= 0 {
+		maxWait = defaultMaxWait
+	}
+	if wait := time.Until(o.OpensAt); wait > maxWait {
+		return nil, fmt.Errorf("refusing to wait %s for the opening at %s: "+
+			"that is further off than this run should ever wait, so something "+
+			"computed the wrong opening",
+			wait.Round(time.Minute), o.OpensAt.Format(time.RFC1123))
+	}
+
+	log := s.log.With("athlete", email, "box", s.box)
+	log.Info("run starting", "targets", len(targets), "dry_run", o.DryRun,
+		"opens_at", o.OpensAt.Format(time.RFC1123))
+
+	started := time.Now()
 	sess, err := s.authenticate(ctx, email, password)
 	if err != nil {
 		return nil, fmt.Errorf("login failed: %w", err)
 	}
+	log.Info("logged in", "took", time.Since(started).Round(time.Millisecond),
+		"cookies", len(sess.Cookies))
 	client, err := wodbuster.NewClient(sess, wodbuster.WithLogger(s.log))
 	if err != nil {
 		return nil, err
@@ -115,8 +151,10 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 
 	clock, err := wodbuster.NewServerClock(ctx, client, 4)
 	if err != nil {
-		s.log.Warn("could not sync with the server clock; using the local one", "err", err)
+		log.Warn("could not sync with the server clock; using the local one", "err", err)
 		clock = wodbuster.SystemClock{}
+	} else if oc, ok := clock.(wodbuster.OffsetClock); ok {
+		log.Info("clock synced", "offset", oc.Offset.Round(time.Millisecond))
 	}
 
 	goals := make([]race.Goal, 0, len(targets))
@@ -125,19 +163,23 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 		if err != nil {
 			return nil, fmt.Errorf("target %s %s: %w", t.Weekday, t.Start, err)
 		}
-		goals = append(goals, race.Goal{
+		g := race.Goal{
 			Target: wodbuster.Target{
 				Date:  wodbuster.NextWeekday(clock.Now().In(s.loc), t.Weekday),
 				Start: start,
 				Name:  t.Class,
 			},
 			Waitlist: t.Waitlist,
-		})
+		}
+		log.Info("target resolved", "class", g.Target.String(), "waitlist", t.Waitlist)
+		goals = append(goals, g)
 	}
 
-	opts := race.Options{Clock: clock, DryRun: o.DryRun, Log: s.log}
+	opts := race.Options{Clock: clock, DryRun: o.DryRun, GiveUpAfter: o.GiveUpAfter, Log: s.log}
 
-	if !o.OpensAt.IsZero() {
+	// The server's clock decides whether there is still a wait: the opening is
+	// its noon, not ours.
+	if o.OpensAt.After(clock.Now()) {
 		opensAt := o.OpensAt
 		// The server's own countdown beats a wall-clock guess when it offers one.
 		if serverSays, err := race.OpensAt(ctx, client, goals[0].Date, clock); err == nil {
@@ -147,6 +189,8 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 				opensAt = serverSays
 			}
 		}
+		s.log.Info("waiting for the opening",
+			"at", opensAt.Format(time.RFC1123), "in", time.Until(opensAt).Round(time.Second))
 		if err := race.WaitUntil(ctx, opensAt, opts); err != nil {
 			return nil, err
 		}
@@ -157,7 +201,11 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 		}
 	}
 
+	log.Info("chasing", "targets", len(goals))
+	chaseStarted := time.Now()
 	results := race.Chase(ctx, client, goals, opts)
+	log.Info("chase finished", "took", time.Since(chaseStarted).Round(time.Millisecond))
+
 	out := make([]Outcome, 0, len(results))
 	for _, r := range results {
 		out = append(out, Outcome{

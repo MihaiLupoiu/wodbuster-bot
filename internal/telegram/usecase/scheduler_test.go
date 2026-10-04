@@ -153,3 +153,105 @@ func TestRehearseWithoutClasses(t *testing.T) {
 	_, err := bs.Rehearse(context.Background(), 7)
 	assert.Error(t, err)
 }
+
+// 2026-10-04: the cron fired at 12:20 for a 12:00 opening — the host had been
+// suspended — and the run computed the *next* opening, a week away, waited for
+// it, and died on its own timeout. A late run must chase the week that is
+// already open.
+func TestLateRunTargetsTheOpeningItMissed(t *testing.T) {
+	loc := madrid(t)
+	o := DefaultOpening(loc)
+
+	noon := time.Date(2026, time.October, 4, 12, 0, 0, 0, loc)
+
+	for name, tc := range map[string]struct {
+		now        time.Time
+		wantTarget time.Time
+	}{
+		"ten minutes early, as the cron intends": {noon.Add(-10 * time.Minute), noon},
+		"twenty minutes late, as it happened":    {noon.Add(20 * time.Minute), noon},
+		"an hour and a half late":                {noon.Add(90 * time.Minute), noon},
+		"past the grace period":                  {noon.Add(3 * time.Hour), noon.AddDate(0, 0, 7)},
+		"midweek":                                {noon.AddDate(0, 0, 3), noon.AddDate(0, 0, 7)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.True(t, o.Target(tc.now).Equal(tc.wantTarget),
+				"at %s: got %s, want %s", tc.now, o.Target(tc.now), tc.wantTarget)
+		})
+	}
+
+	assert.True(t, o.InWindow(noon.Add(20*time.Minute)))
+	assert.False(t, o.InWindow(noon.Add(-10*time.Minute)))
+	assert.False(t, o.InWindow(noon.AddDate(0, 0, 3)))
+}
+
+// A late run hands the booker an opening in the past, which is what makes the
+// chase start immediately instead of waiting.
+func TestRunForAthleteChasesImmediatelyWhenTheWeekIsOpen(t *testing.T) {
+	booker := NewMockBooker(t)
+	bs, store, notifier := schedulerFor(t, booker)
+
+	store.EXPECT().GetUser(mock.Anything, int64(7)).Return(storedUser(t, 7, "hunter2"), true)
+	store.EXPECT().UpdateBookingStatus(mock.Anything, "a1", "active", "").Return(nil)
+	store.EXPECT().UpdateBookingStatus(mock.Anything, "a1", "success", "").Return(nil)
+	notifier.EXPECT().Notify(int64(7), mock.Anything).Return()
+
+	opened := time.Now().Add(-20 * time.Minute)
+	booker.EXPECT().Run(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _, _ string, _ []booking.Target,
+			o booking.RunOptions) ([]booking.Outcome, error) {
+
+			assert.True(t, o.OpensAt.Before(time.Now()), "the opening is in the past; do not wait")
+			return []booking.Outcome{{Class: "Monday 07:00 Wod", Status: "booked"}}, nil
+		})
+
+	out := bs.runForAthlete(context.Background(), 7,
+		[]models.BookingAttempt{{ID: "a1", ChatID: 7, Day: "Monday", Hour: "07:00", ClassType: "Wod"}},
+		RunSettings{OpensAt: opened})
+	require.Len(t, out, 1)
+}
+
+// The failure path used to record on the context that had just expired, so the
+// reason never reached storage — see the 2026-10-04 logs, three lines of
+// "could not record the failure: context deadline exceeded".
+func TestFailureIsRecordedEvenWhenTheRunContextIsDead(t *testing.T) {
+	booker := NewMockBooker(t)
+	bs, store, notifier := schedulerFor(t, booker)
+
+	dead, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	store.EXPECT().UpdateBookingStatus(mock.Anything, "a1", "failed", "boom").Return(nil)
+	notifier.EXPECT().Notify(int64(7), mock.Anything).Return()
+
+	bs.fail(dead, 7, []models.BookingAttempt{{ID: "a1"}}, errors.New("boom"))
+	_ = booker
+}
+
+// A day name that will not parse must fail its own booking and leave the others
+// correctly matched to their outcomes.
+func TestOutcomesStayAlignedWhenOneTargetIsUnparseable(t *testing.T) {
+	booker := NewMockBooker(t)
+	bs, store, notifier := schedulerFor(t, booker)
+
+	attempts := []models.BookingAttempt{
+		{ID: "bad", ChatID: 7, Day: "Funday", Hour: "07:00", ClassType: "Wod"},
+		{ID: "good", ChatID: 7, Day: "Friday", Hour: "07:00", ClassType: "Wod"},
+	}
+	store.EXPECT().GetUser(mock.Anything, int64(7)).Return(storedUser(t, 7, "hunter2"), true)
+	store.EXPECT().UpdateBookingStatus(mock.Anything, "bad", "failed", mock.Anything).Return(nil)
+	store.EXPECT().UpdateBookingStatus(mock.Anything, "good", "active", "").Return(nil)
+	// The surviving outcome must be recorded against "good", not "bad".
+	store.EXPECT().UpdateBookingStatus(mock.Anything, "good", "success", "").Return(nil)
+	notifier.EXPECT().Notify(int64(7), mock.Anything).Return().Twice()
+
+	booker.EXPECT().Run(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _, _ string, targets []booking.Target,
+			_ booking.RunOptions) ([]booking.Outcome, error) {
+			require.Len(t, targets, 1)
+			assert.Equal(t, time.Friday, targets[0].Weekday)
+			return []booking.Outcome{{Class: "Friday 07:00 Wod", Status: "booked"}}, nil
+		})
+
+	bs.runForAthlete(context.Background(), 7, attempts, RunSettings{})
+}

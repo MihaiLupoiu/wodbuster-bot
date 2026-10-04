@@ -129,12 +129,21 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, *http.Response, 
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("User-Agent", c.userAgent)
 
+	// Every call to WodBuster shows up here at debug, with how long it took.
+	// At an opening the timings are the evidence: which request landed first,
+	// which one the server sat on, how long the day took to appear.
+	started := time.Now()
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.log.Debug("wodbuster request failed",
+			"path", path, "took", time.Since(started).Round(time.Millisecond), "err", err)
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	c.log.Debug("wodbuster request",
+		"path", path, "status", resp.StatusCode, "bytes", len(body),
+		"took", time.Since(started).Round(time.Millisecond))
 	if err != nil {
 		return nil, resp, err
 	}
