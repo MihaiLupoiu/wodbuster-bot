@@ -325,14 +325,19 @@ at all counts as `(none)`. This mirrors the `(others)` bucketing in
 buying-engine-service. Any future label taken from user input needs the same
 treatment.
 
-Scrape config:
+Scraping and dashboards live in the infrastructure repo, not here:
 
-```yaml
-scrape_configs:
-  - job_name: wodbuster-bot
-    static_configs:
-      - targets: ['wodbuster-bot:8080']
-```
+| What | Where |
+|---|---|
+| Scrape job | `compose-stacks/compose/nas/victoriametrics/scrape.yml` |
+| Dashboard | `compose-stacks/compose/nas/grafana/dashboards/apps/wodbuster-bot.json` |
+| Alert rules | `compose-stacks/compose/nas/alertmanager/rules/wodbuster.yml` |
+
+vmagent reaches `wodbuster-bot:8080` over `homelab-net`, which is why
+`deploy/portainer-stack.yml` fixes the container name and joins that network.
+Nothing is published to the host: `/metrics` and `/health` are for the
+monitoring stack, and a port published on `127.0.0.1` would be unreachable from
+it anyway.
 
 ## 🧪 **Testing**
 

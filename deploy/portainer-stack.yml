@@ -1,0 +1,105 @@
+# Portainer stack: the published image, with the database on MongoDB Atlas.
+#
+# Paste this into Portainer > Stacks > Add stack > Web editor, fill the
+# environment variables in the panel below the editor, and deploy. There is no
+# mongodb service here on purpose — Atlas is the database, so nothing in this
+# stack holds state and the container can be recreated freely.
+#
+# Required variables (set them in Portainer, not in this file):
+#   WODBUSTER_IMAGE     mihailupoiu/wodbuster-bot:v0.0.2   — pin a version, not :latest
+#   TELEGRAM_BOT_TOKEN  from @BotFather
+#   ENCRYPTION_KEY      exactly 16, 24 or 32 bytes; encrypts stored passwords
+#   MONGO_URI           mongodb+srv://user:pass@cluster.xxxxx.mongodb.net/?retryWrites=true&w=majority
+#
+# Atlas, once:
+#   1. Database Access: a user with readWrite on the wodbuster database.
+#   2. Network Access: add this host's public IP. A free-tier cluster refuses
+#      everything else, and the bot will fail at startup saying so rather than
+#      looking healthy and failing at noon on Sunday.
+#   3. If the password contains @ : / ? # or %, percent-encode it in the URI.
+#   4. A paused cluster drops its DNS records entirely, so a resumed one can
+#      take a few minutes before `mongodb+srv://` resolves again.
+
+services:
+  bot:
+    image: ${WODBUSTER_IMAGE}
+
+    # Fixed, because Prometheus scrapes this container by name over
+    # homelab-net. Without it Compose names it <stack>-bot-1, which changes
+    # with the stack name and leaves the scrape target dangling.
+    container_name: wodbuster-bot
+
+    # on-failure, not unless-stopped: the bot exits immediately on a bad token,
+    # a bad ENCRYPTION_KEY or an unreachable database, and unless-stopped turns
+    # that into a hot loop hammering Telegram roughly once a second.
+    restart: on-failure:5
+
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+
+      STORAGE_TYPE: mongodb
+      MONGO_URI: ${MONGO_URI}
+      MONGO_DB: ${MONGO_DB:-wodbuster}
+
+      WODBUSTER_BOX: ${WODBUSTER_BOX:-firespain}
+      WODBUSTER_TIMEZONE: ${WODBUSTER_TIMEZONE:-Europe/Madrid}
+
+      APP_ENV: prod
+      LOGGING_LEVEL: ${LOGGING_LEVEL:-DEBUG}
+      HEALTH_CHECK_PORT: "8080"
+      # APP_VERSION is baked into the image at build time by the release
+      # workflow, and reported as wodbuster_bot_build_info. Setting it here
+      # would overwrite that with whatever this file says.
+
+    # The login drives a real Chrome. Docker's default 64 MB of /dev/shm is not
+    # enough for it. The browser is also launched with --disable-dev-shm-usage,
+    # so this is belt and braces — but with it, Chrome is faster and steadier.
+    # Swarm-mode stacks ignore shm_size; drop this line if Portainer rejects it.
+    shm_size: 512m
+
+    # Chromium is the memory in this stack: ~400 MB during a login, near zero
+    # the rest of the week. Below ~512 MB the browser is killed mid-login.
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+    healthcheck:
+      # The binary is the only thing in the image — no curl, no wget — so ask
+      # the kernel instead: if the health server is listening, the bot is up.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8080 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    networks:
+      # homelab-net is where the monitoring stack lives, so vmagent reaches
+      # /metrics at wodbuster-bot:8080 without anything being published to the
+      # host. Scrape job: compose-stacks/compose/nas/victoriametrics/scrape.yml.
+      - homelab-net
+
+    # No ports by default. /health and /metrics are reachable from the
+    # monitoring stack over homelab-net, which is all either is for. To curl
+    # them from the host while debugging, uncomment:
+    #
+    # ports:
+    #   - "127.0.0.1:8090:8080"
+    #
+    # Note that 127.0.0.1 publishes on the host's loopback only: reachable as
+    # localhost:8090 ON that host, and from nowhere else. Use "8090:8080" if
+    # something on the LAN has to reach it.
+
+    logging:
+      # A debug-level Sunday run is a few hundred lines per athlete. Cap it, or
+      # the host's disk becomes the thing that breaks.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  homelab-net:
+    # Created outside this stack — see nix-config/modules/nas/docker-networks.nix.
+    external: true
