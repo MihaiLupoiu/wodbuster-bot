@@ -13,8 +13,10 @@ package booking
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
@@ -47,6 +49,7 @@ type Service struct {
 	headless   bool
 	chromePath string
 	log        *slog.Logger
+	metrics    *Metrics
 }
 
 type Option func(*Service)
@@ -58,6 +61,10 @@ func WithHeadless(v bool) Option { return func(s *Service) { s.headless = v } }
 // WithChromePath points at a specific browser binary. Empty means "search the
 // usual locations", which is right on a laptop and wrong in a container.
 func WithChromePath(p string) Option { return func(s *Service) { s.chromePath = p } }
+
+// WithMetrics records what the runs do. Build it from the platform registry:
+// booking.WithMetrics(booking.NewMetrics(prom.Registry())).
+func WithMetrics(m *Metrics) Option { return func(s *Service) { s.metrics = m } }
 
 func New(box string, loc *time.Location, log *slog.Logger, opts ...Option) *Service {
 	s := &Service{box: box, loc: loc, headless: true, log: log}
@@ -79,12 +86,17 @@ func (s *Service) authenticate(ctx context.Context, email, password string) (wod
 	opts := []browserauth.Option{
 		browserauth.WithHeadless(s.headless),
 		browserauth.WithLogger(s.log),
+		browserauth.WithDriftObserver(s.metrics.observeDrift),
 	}
 	if s.chromePath != "" {
 		opts = append(opts, browserauth.WithChromePath(s.chromePath))
 	}
-	return browserauth.New(opts...).
+
+	started := time.Now()
+	sess, err := browserauth.New(opts...).
 		Authenticate(ctx, s.box, browserauth.Credentials{Email: email, Password: password})
+	s.metrics.observeLogin(loginResult(err), time.Since(started))
+	return sess, err
 }
 
 // RunOptions says when to act and whether to touch anything.
@@ -144,7 +156,12 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 	}
 	log.Info("logged in", "took", time.Since(started).Round(time.Millisecond),
 		"cookies", len(sess.Cookies))
-	client, err := wodbuster.NewClient(sess, wodbuster.WithLogger(s.log))
+	clientOpts := []wodbuster.Option{wodbuster.WithLogger(s.log)}
+	if s.metrics != nil {
+		clientOpts = append(clientOpts,
+			wodbuster.WithHTTPClient(s.metrics.httpClientWith(&http.Client{Timeout: 20 * time.Second})))
+	}
+	client, err := wodbuster.NewClient(sess, clientOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +172,7 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 		clock = wodbuster.SystemClock{}
 	} else if oc, ok := clock.(wodbuster.OffsetClock); ok {
 		log.Info("clock synced", "offset", oc.Offset.Round(time.Millisecond))
+		s.metrics.observeClockOffset(oc.Offset)
 	}
 
 	goals := make([]race.Goal, 0, len(targets))
@@ -208,6 +226,7 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 
 	out := make([]Outcome, 0, len(results))
 	for _, r := range results {
+		s.observeResult(r, o.OpensAt)
 		out = append(out, Outcome{
 			Class:  r.Goal.Target.String(),
 			Status: r.Outcome.String(),
@@ -215,6 +234,25 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 		})
 	}
 	return out, nil
+}
+
+// observeResult records what one chased goal did. Latency is measured from the
+// opening, because that is the moment everyone else starts too; a run with no
+// opening (a rehearsal) has nothing to measure against.
+func (s *Service) observeResult(r race.Result, opensAt time.Time) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.observeAttempts(r.Attempts)
+
+	switch {
+	case errors.Is(r.Err, race.ErrNeverPublished):
+		s.metrics.observeUnpublished(r.Goal.Date.Weekday())
+	case r.Outcome == race.OutcomeBooked && !opensAt.IsZero() && !r.At.IsZero():
+		if d := r.At.Sub(opensAt); d >= 0 {
+			s.metrics.observeBookingLatency(d)
+		}
+	}
 }
 
 // NextOpening is the next moment the box publishes a week, in loc.

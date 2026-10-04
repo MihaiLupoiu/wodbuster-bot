@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -57,9 +58,14 @@ func New(config *Config) (*App, error) {
 	var store usecase.Storage
 	var err error
 
+	// The registry comes first: storage instruments the Mongo driver with it.
+	promMetrics := metrics.NewPrometheus()
+	promMetrics.SetBuildInfo(config.Version, runtime.Version())
+
 	switch config.StorageType {
 	case "mongodb":
-		store, err = storage.NewMongoStorage(config.MongoURI, config.MongoDB)
+		store, err = storage.NewMongoStorageWithMetrics(config.MongoURI, config.MongoDB,
+			storage.NewMongoMetrics(promMetrics.Registry()))
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize MongoDB storage: %w", err)
 		}
@@ -78,9 +84,11 @@ func New(config *Config) (*App, error) {
 	opening := usecase.DefaultOpening(loc)
 
 	booker := booking.New(config.Box, loc, logger,
-		booking.WithChromePath(config.ChromePath))
+		booking.WithChromePath(config.ChromePath),
+		booking.WithMetrics(booking.NewMetrics(promMetrics.Registry())))
 
 	bookingScheduler := usecase.NewBookingScheduler(store, booker, opening, config.EncryptionKey, logger)
+	bookingScheduler.SetMetrics(usecase.NewMetrics(promMetrics.Registry()))
 
 	manager := usecase.NewManager(
 		store,
@@ -89,11 +97,6 @@ func New(config *Config) (*App, error) {
 		bookingScheduler,
 		logger,
 	)
-
-	// One registry for the process, configured in platform and served at
-	// /metrics by the health server. Each package registers its own metrics
-	// against it — see telegram.NewMetrics below.
-	promMetrics := metrics.NewPrometheus()
 
 	// Initialize Telegram bot
 	bot, err := telegram.New(config.TelegramToken, manager, logger)

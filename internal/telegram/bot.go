@@ -103,6 +103,7 @@ func (b *Bot) Start() error {
 	for {
 		select {
 		case update := <-updates:
+			b.metrics.ObserveUpdate()
 			if update.Message == nil {
 				continue
 			}
@@ -150,9 +151,11 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 	}
 
 	defer func() {
+		took := time.Since(started)
+		b.metrics.ObserveCommandDuration(command, took)
 		b.logger.Info("message handled",
 			"chat_id", chatID, "command", command,
-			"took", time.Since(started).Round(time.Millisecond))
+			"took", took.Round(time.Millisecond))
 	}()
 
 	switch update.Message.Command() {
@@ -326,7 +329,9 @@ func (b *Bot) sendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 
-	if _, err := b.api.Send(msg); err != nil {
+	_, err := b.api.Send(msg)
+	b.metrics.ObserveMessageSent(err)
+	if err != nil {
 		b.logger.Error("could not send message", "error", err, "chat_id", chatID,
 			"text", firstLine(text))
 		return

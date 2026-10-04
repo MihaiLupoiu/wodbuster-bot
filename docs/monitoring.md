@@ -1,8 +1,12 @@
 # What to monitor
 
-A shortlist for `wodbuster-bot`, ordered by what has actually broken. Nothing
-here is implemented yet except the command counter; this is the menu to pick
-from, not a plan of record.
+A shortlist for `wodbuster-bot`, ordered by what has actually broken.
+**Everything below is implemented** except where a row says otherwise.
+
+Where each metric lives: the package that records it owns it, registered against
+the platform registry — `internal/telegram/metrics.go`,
+`internal/telegram/usecase/metrics.go`, `internal/booking/metrics.go`,
+`internal/storage/metrics.go`.
 
 The shape follows `buying-engine-service` (explicit registry, `Observe*` methods
 on a struct) and, for the Mongo client, `ssp-service`'s
@@ -34,7 +38,7 @@ The system's purpose. Without these, "it works" is an anecdote.
 
 | Metric | Type | Labels | Why |
 |---|---|---|---|
-| `wodbuster_bot_booking_outcomes_total` | Counter | `outcome` (booked, already-booked, waitlisted, failed), `class` | The headline number: classes booked per week versus classes targeted. |
+| `wodbuster_bot_booking_outcomes_total` | Counter | `outcome`, `weekday`, `class` | The headline number: classes booked per week versus classes targeted. |
 | `wodbuster_bot_booking_latency_seconds` | Histogram | — | Time from the opening to the place being taken. On 2026-09-27 this was 497ms, 520ms and 833ms. If it drifts towards seconds, places start being lost to faster athletes. Buckets want to be fine-grained and low: 0.1 to 5s. |
 | `wodbuster_bot_booking_attempts` | Histogram | — | How many calls it took. Three classes collided with each other that same day; the histogram is where that shows up as a distribution rather than a log line. |
 | `wodbuster_bot_booking_failures_total` | Counter | `reason` (full, quota, not-included, busy, session-expired, api-error, not-published) | The `classify` sentinels, as a metric. "Failed because the class was full" and "failed because the login broke" need opposite reactions, and today both are one red line in a log. |
@@ -74,8 +78,8 @@ slightly.
 
 | Metric | Type | Labels | Why |
 |---|---|---|---|
-| `wodbuster_bot_commands_total` | Counter | `command` | **Implemented.** |
-| `wodbuster_bot_updates_total` | Counter | `result` (ok, error) | `getUpdates` failing means the bot is deaf. We have already seen `unexpected EOF` in the logs with nothing watching it. |
+| `wodbuster_bot_commands_total` | Counter | `command` | What the bot is asked to do. |
+| `wodbuster_bot_updates_total` + `wodbuster_bot_last_update_timestamp_seconds` | Counter + Gauge | — | A stalled long-poll means the bot is deaf. The library swallows the `getUpdates` error, so the signal is the timestamp going stale rather than an error count. |
 | `wodbuster_bot_messages_sent_total` | Counter | `result` | A booking that succeeds but cannot be reported is, to the athlete, a booking that did not happen. |
 | `wodbuster_bot_command_duration_seconds` | Histogram | `command` | `/rehearse` takes seconds and drives a browser; the rest should be instant. |
 
@@ -84,16 +88,18 @@ slightly.
 | Metric | Type | Labels | Why |
 |---|---|---|---|
 | `wodbuster_bot_build_info` | Gauge (always 1) | `version`, `revision` | Which release is actually running. Standard, cheap, and answers the first question of any incident. |
-| `wodbuster_bot_browser_launches_total` | Counter | `result` | Chromium is the memory in this container, ~400MB per login. OOM kills show up here as failures with nothing in the logs. |
-| `wodbuster_bot_athletes` / `_scheduled_classes` / `_pending_bookings` | Gauge | — | Whether the thing has users, and whether the Sunday run has anything to do. A run that books nothing because nothing was scheduled is not a failure, and these tell the two apart. |
-| Go runtime + process collectors | — | — | **Implemented** (GC, scheduler, memory, fds). |
+| `wodbuster_bot_browser_launches_total` | Counter | `result` | **Not implemented separately** — `login_total{result="error"}` already covers a browser that will not start, and a second counter for the same event would double-count. Worth splitting only if OOM kills turn out to be common. |
+| `wodbuster_bot_pending_bookings` | Gauge | — | Whether the Sunday run had anything to do. A run that books nothing because nothing was scheduled is not a failure, and this tells the two apart. **`athletes` and `scheduled_classes` are not implemented**: `usecase.Storage` has no count methods, and adding them touches both storage backends and the mocks. |
+| Go runtime + process collectors | — | — | GC, scheduler, memory, fds — registered by `platform/metrics`. |
+| `wodbuster_bot_build_info` | Gauge | `version`, `go_version` | Set from `APP_VERSION`, which the release workflow bakes into the image. |
 
 ---
 
-## Alerts worth having before more metrics
+## Alerts worth having
 
 Metrics nobody looks at are a cost. The small set that would have caught every
-incident so far:
+incident so far — none of these is wired up yet, since there is no Alertmanager
+in this deployment:
 
 1. **No successful run in 8 days** — `time() - wodbuster_bot_run_last_success_timestamp_seconds > 691200`.
 2. **The run started late** — `wodbuster_bot_run_lateness_seconds > 120`.

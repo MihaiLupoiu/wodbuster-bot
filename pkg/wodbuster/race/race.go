@@ -58,6 +58,10 @@ type Result struct {
 	Outcome Outcome
 	Err     error
 	At      time.Time // when it resolved
+
+	// Attempts is how many booking calls were made. One means it went in on
+	// the first ask; more means the places were being fought over.
+	Attempts int
 }
 
 func (r Result) OK() bool {
@@ -281,6 +285,7 @@ func book(ctx context.Context, c *wodbuster.Client, g Goal, class wodbuster.Clas
 			break
 		}
 
+		res.Attempts = attempt
 		err := c.Book(ctx, class.ID, class.Date)
 		if err == nil {
 			o.Log.Info("booked", "goal", g.Target.String(), "id", class.ID,

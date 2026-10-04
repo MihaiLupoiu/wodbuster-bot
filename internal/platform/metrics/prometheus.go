@@ -68,6 +68,18 @@ func NewPrometheus(opts ...PrometheusOpt) *PrometheusMetrics {
 // callers also need it to collect, and tests to assert.
 func (p *PrometheusMetrics) Registry() *prometheus.Registry { return p.reg }
 
+// SetBuildInfo publishes which build is running, as the conventional always-1
+// gauge. It is the first question of any incident and costs one series.
+func (p *PrometheusMetrics) SetBuildInfo(version, goVersion string) {
+	g := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: Namespace,
+		Name:      "build_info",
+		Help:      "Always 1. The labels carry the build.",
+	}, []string{"version", "go_version"})
+	p.reg.MustRegister(g)
+	g.WithLabelValues(version, goVersion).Set(1)
+}
+
 // RegisterCollectors adds collectors a package built itself — a driver's own
 // exporter, say — to the same registry.
 func (p *PrometheusMetrics) RegisterCollectors(cs ...prometheus.Collector) {

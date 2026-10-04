@@ -309,9 +309,11 @@ default one, collectors built with `promauto.With(reg)`, and `Observe*` methods
 on a struct that callers hold. Nothing reads a package-level global, so a test
 builds its own registry and asserts on it.
 
-So far there is exactly one metric, a counter per bot command, plus the Go
-runtime and process collectors. [`docs/monitoring.md`](docs/monitoring.md) is
-the shortlist of what to add next, ordered by what has actually broken. Adding a metric means adding a field to
+26 metrics across four packages: the weekly run (did it happen, how late, what
+it booked), WodBuster itself (requests, login, clock offset, control drift), the
+Mongo client (via the driver's own event monitors) and Telegram (commands,
+updates, replies). [`docs/monitoring.md`](docs/monitoring.md) lists them all
+with the reasoning, and the alerts worth building on top. Adding a metric means adding a field to
 `metrics.Metrics` and an `Observe*` method beside it
 ([`internal/metrics/metrics.go`](internal/metrics/metrics.go)).
 

@@ -40,6 +40,7 @@ type BookingScheduler struct {
 	opening           Opening
 	encryptionKey     string
 	logger            *slog.Logger
+	metrics           *Metrics
 	cron              *cron.Cron
 	notifier          Notifier
 	activeBookings    map[int64]*BookingContext
@@ -60,6 +61,10 @@ func NewBookingScheduler(storage Storage, booker Booker, opening Opening,
 		activeBookings: make(map[int64]*BookingContext),
 	}
 }
+
+// SetMetrics records what the runs do. Called once, at startup, from the same
+// place that builds the platform registry.
+func (bs *BookingScheduler) SetMetrics(m *Metrics) { bs.metrics = m }
 
 // SetNotifier wires up where results are delivered. Called once, at startup,
 // because the bot and the scheduler need each other.
@@ -124,15 +129,24 @@ func (bs *BookingScheduler) processAllBookings() {
 		"opens_at", opensAt.Format(time.RFC1123),
 		"already_open", opensAt.Before(now))
 
+	// Lateness is measured against when this run was meant to begin — the
+	// opening minus the head start — not against the opening itself.
+	bs.metrics.observeRunLateness(opensAt.Add(-bs.opening.StartBefore), now)
+
 	ctx := context.Background()
 	pending, err := bs.storage.GetAllPendingBookings(ctx)
 	if err != nil {
 		bs.logger.Error("could not read pending bookings", "error", err)
+		bs.metrics.observeRunFinished("failed", time.Since(now))
 		return
 	}
+	bs.metrics.observeRunStart(len(pending))
 	byAthlete := groupByChat(pending)
 	if len(byAthlete) == 0 {
 		bs.logger.Info("nothing to book")
+		// A run with nothing to do still ran: the alert that matters is "no run
+		// happened", and an empty week must not trip it.
+		bs.metrics.observeRunFinished("completed", time.Since(now))
 		return
 	}
 	bs.logger.Info("booking for athletes", "athletes", len(byAthlete))
@@ -146,7 +160,8 @@ func (bs *BookingScheduler) processAllBookings() {
 		}(chatID, attempts)
 	}
 	wg.Wait()
-	bs.logger.Info("booking run finished")
+	bs.metrics.observeRunFinished("completed", time.Since(now))
+	bs.logger.Info("booking run finished", "took", time.Since(now).Round(time.Millisecond))
 }
 
 // RunSettings is what distinguishes the Sunday run from a rehearsal.
@@ -280,6 +295,9 @@ func (bs *BookingScheduler) record(ctx context.Context, chatID int64,
 			}
 		}
 		lines = append(lines, formatOutcome(o))
+		if i < len(attempts) {
+			bs.metrics.observeOutcome(o, attempts[i].Day, attempts[i].ClassType)
+		}
 		bs.logger.Info("booking outcome", "chat_id", chatID,
 			"class", o.Class, "status", o.Status, "err", o.Err)
 	}
@@ -297,6 +315,7 @@ func (bs *BookingScheduler) fail(ctx context.Context, chatID int64,
 	defer cancel()
 
 	bs.logger.Error("booking run failed", "chat_id", chatID, "error", err)
+	bs.metrics.observeRunFailure(err, len(attempts))
 	for _, a := range attempts {
 		if a.ID == "" {
 			continue

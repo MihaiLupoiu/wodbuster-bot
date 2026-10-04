@@ -1,6 +1,8 @@
 package telegram
 
 import (
+	"time"
+
 	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
@@ -31,7 +33,11 @@ var knownCommands = map[string]bool{
 //
 //	bot.WithMetrics(telegram.NewMetrics(prom.Registry()))
 type Metrics struct {
-	commandsTotal *prom.CounterVec
+	commandsTotal   *prom.CounterVec
+	commandDuration *prom.HistogramVec
+	updatesTotal    prom.Counter
+	lastUpdate      prom.Gauge
+	messagesSent    *prom.CounterVec
 }
 
 // NewMetrics registers the bot's metrics against reg.
@@ -49,7 +55,68 @@ func NewMetrics(reg prom.Registerer) *Metrics {
 			},
 			[]string{labelCommand},
 		),
+
+		commandDuration: factory.NewHistogramVec(
+			prom.HistogramOpts{
+				Namespace: metrics.Namespace,
+				Name:      "command_duration_seconds",
+				Help: "How long a command took to handle. Most are instant; " +
+					"/login and /rehearse drive a browser.",
+				Buckets: []float64{0.01, 0.1, 0.5, 1, 2, 5, 10, 20, 45, 90},
+			},
+			[]string{labelCommand},
+		),
+
+		updatesTotal: factory.NewCounter(prom.CounterOpts{
+			Namespace: metrics.Namespace,
+			Name:      "updates_total",
+			Help:      "Telegram updates received.",
+		}),
+
+		lastUpdate: factory.NewGauge(prom.GaugeOpts{
+			Namespace: metrics.Namespace,
+			Name:      "last_update_timestamp_seconds",
+			Help: "Unix time of the last update received. A stalled long-poll — " +
+				"\"getUpdates: unexpected EOF\" and no reconnect — leaves the bot " +
+				"deaf with nothing in the logs, and this is how that looks.",
+		}),
+
+		messagesSent: factory.NewCounterVec(prom.CounterOpts{
+			Namespace: metrics.Namespace,
+			Name:      "messages_sent_total",
+			Help: "Replies sent, by result. A booking that succeeds but cannot be " +
+				"reported is, to the athlete, a booking that did not happen.",
+		}, []string{"result"}),
 	}
+}
+
+// ObserveUpdate counts one update arriving from Telegram.
+func (m *Metrics) ObserveUpdate() {
+	if m == nil {
+		return
+	}
+	m.updatesTotal.Inc()
+	m.lastUpdate.SetToCurrentTime()
+}
+
+// ObserveCommandDuration records how long a command took to handle.
+func (m *Metrics) ObserveCommandDuration(command string, d time.Duration) {
+	if m == nil {
+		return
+	}
+	m.commandDuration.WithLabelValues(commandLabel(command)).Observe(d.Seconds())
+}
+
+// ObserveMessageSent counts one reply.
+func (m *Metrics) ObserveMessageSent(err error) {
+	if m == nil {
+		return
+	}
+	result := "ok"
+	if err != nil {
+		result = "error"
+	}
+	m.messagesSent.WithLabelValues(result).Inc()
 }
 
 // ObserveCommand counts one received command. A nil *Metrics counts nothing, so
