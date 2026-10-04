@@ -296,8 +296,10 @@ WODBUSTER_IMAGE=<user>/wodbuster-bot:v1.2.3 docker compose up --no-build
 
 ## 📈 **Metrics**
 
-Prometheus metrics are served at `/metrics` on the health port (8080), next to
-`/health`, so the process keeps a single listener.
+Prometheus metrics are served at `/metrics` on the health port, next to
+`/health`, so the process keeps a single listener. The port is
+`HEALTH_CHECK_PORT` (8080 by default; the homelab deployment runs it on 8090,
+where qBittorrent already holds host 8080).
 
 ```
 wodbuster_bot_commands_total{command="book"} 3
@@ -333,11 +335,11 @@ Scraping and dashboards live in the infrastructure repo, not here:
 | Dashboard | `compose-stacks/compose/nas/grafana/dashboards/apps/wodbuster-bot.json` |
 | Alert rules | `compose-stacks/compose/nas/alertmanager/rules/wodbuster.yml` |
 
-vmagent reaches `wodbuster-bot:8080` over `homelab-net`, which is why
+vmagent reaches `wodbuster-bot:8090` over `homelab-net`, which is why
 `deploy/portainer-stack.yml` fixes the container name and joins that network.
 Nothing is published to the host: `/metrics` and `/health` are for the
 monitoring stack, and a port published on `127.0.0.1` would be unreachable from
-it anyway.
+it anyway. Change `HEALTH_CHECK_PORT` and the scrape job has to change with it.
 
 ## 🧪 **Testing**
 

@@ -47,7 +47,12 @@ services:
 
       APP_ENV: prod
       LOGGING_LEVEL: ${LOGGING_LEVEL:-DEBUG}
-      HEALTH_CHECK_PORT: "8080"
+      # 8090, not the 8080 default: qBittorrent holds host 8080 on this NAS.
+      # Container ports do not actually collide — each container has its own
+      # IP on homelab-net, which is how cadvisor runs on 8080 there — but
+      # keeping one number for this service everywhere is one less thing to
+      # remember. Change it here and the scrape job must change with it.
+      HEALTH_CHECK_PORT: "8090"
       # APP_VERSION is baked into the image at build time by the release
       # workflow, and reported as wodbuster_bot_build_info. Setting it here
       # would overwrite that with whatever this file says.
@@ -68,7 +73,7 @@ services:
     healthcheck:
       # The binary is the only thing in the image — no curl, no wget — so ask
       # the kernel instead: if the health server is listening, the bot is up.
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 8080 || exit 1"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8090 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -76,20 +81,24 @@ services:
 
     networks:
       # homelab-net is where the monitoring stack lives, so vmagent reaches
-      # /metrics at wodbuster-bot:8080 without anything being published to the
+      # /metrics at wodbuster-bot:8090 without anything being published to the
       # host. Scrape job: compose-stacks/compose/nas/victoriametrics/scrape.yml.
       - homelab-net
 
-    # No ports by default. /health and /metrics are reachable from the
-    # monitoring stack over homelab-net, which is all either is for. To curl
-    # them from the host while debugging, uncomment:
+    # Nothing published. /health and /metrics exist for the monitoring stack,
+    # which reaches them over homelab-net; publishing them would put a port on
+    # the host for something no human reads. To curl them while debugging:
+    #
+    #   docker exec wodbuster-bot wget -qO- localhost:8090/metrics
+    #
+    # or, from another container on homelab-net, http://wodbuster-bot:8090/.
+    # If something on the LAN really does need it, add:
     #
     # ports:
-    #   - "127.0.0.1:8090:8080"
+    #   - "8090:8090"
     #
-    # Note that 127.0.0.1 publishes on the host's loopback only: reachable as
-    # localhost:8090 ON that host, and from nowhere else. Use "8090:8080" if
-    # something on the LAN has to reach it.
+    # and note that "127.0.0.1:8090:8090" would publish on the host's loopback
+    # only — reachable as localhost:8090 on the NAS itself and nowhere else.
 
     logging:
       # A debug-level Sunday run is a few hundred lines per athlete. Cap it, or
