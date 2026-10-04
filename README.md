@@ -1,6 +1,6 @@
 # 🤖 WODBuster Bot
 
-A Telegram bot that automatically books fitness classes on WODBuster when booking opens every Saturday at 12:00 PM.
+A Telegram bot that automatically books fitness classes on WODBuster the moment the week opens, on Sunday at 12:00 (Europe/Madrid).
 
 ## ✨ **Features**
 
@@ -8,7 +8,7 @@ A Telegram bot that automatically books fitness classes on WODBuster when bookin
 - 📅 **Automated Booking**: Schedule classes to be booked automatically
 - ⚡ **Multi-User Support**: Each user gets their own browser session for parallel booking
 - 🍪 **Session Persistence**: Remembers your login using WODBuster session cookie
-- ⏰ **Saturday Cronjob**: Runs every Saturday at 11:55 AM, ready to book at 12:00 PM
+- ⏰ **Weekly run**: Wakes up ten minutes before the opening, logs in, syncs with the server's clock, and books the instant the week is published
 - 🧪 **Session Testing**: Verify your login status anytime
 - 📊 **Status Monitoring**: Track your scheduled classes and booking attempts
 
@@ -27,14 +27,14 @@ graph TB
     F --> H[MongoDB Storage]
     F --> I[Memory Storage]
     
-    G --> J[WODBuster Website<br/>chromedp]
+    G --> J[WODBuster<br/>login via chromedp,<br/>booking over HTTP]
     
     K[App Level] --> L[Bot]
     K --> M[SessionManager]
     K --> N[BookingScheduler]
     K --> O[Manager]
     
-    P[Saturday 11:55 Cronjob] --> E
+    P[Sunday 11:50 Cronjob] --> E
     E --> Q[Parallel User Booking<br/>Each with dedicated<br/>browser context]
 ```
 
@@ -48,14 +48,33 @@ graph TB
 ### Package Structure
 
 ```
+pkg/
+└── wodbuster/              # Standalone WodBuster client — see pkg/wodbuster/README.md
+    ├── browserauth/        # Login via headless Chrome (chromedp)
+    ├── race/               # Waiting and polling policy
+    └── wodbustertest/      # A fake WodBuster, for tests that cannot wait a week
+
+internal/
+└── booking/                # The bot's side of pkg/wodbuster: credentials + classes -> a run
+
+cmd/
+├── bot/                    # The Telegram bot
+└── wodbook/                # The CLI that proves the library books
+
 internal/
 ├── app/                    # Application orchestration
 ├── models/                 # Domain models (User, BookingAttempt, etc.)
 ├── telegram/               # Telegram bot interface
 │   └── usecase/           # Business logic (Manager, SessionManager, BookingScheduler)
 ├── storage/               # Storage implementations (MongoDB, Memory)
-└── wodbuster/             # Simple chromedp client wrapper
+└── wodbuster/             # Simple chromedp client wrapper (being replaced by pkg/wodbuster)
 ```
+
+`pkg/wodbuster` is new and not yet wired into the bot. It exists because talking
+to WodBuster and winning the rush when a week is published is a different kind
+of problem from cron, Mongo and Telegram conversations — and only the first one
+needs a Sunday to verify. `cmd/wodbook` exercises it end to end with nothing but
+a binary and a terminal.
 
 ## 🚀 **Quick Start**
 
@@ -130,7 +149,8 @@ VERSION=1.0.0
 **Authentication:**
 - `/start` - Welcome message and instructions
 - `/login email password` - Login with your WODBuster credentials
-- `/test` - Test your current session
+- `/test` - Check that your stored credentials still log in
+- `/rehearse` - Resolve your classes against the published week, booking nothing
 
 **Booking:**
 - `/book day hour class-type` - Schedule a class for automatic booking
@@ -152,7 +172,7 @@ Bot: ✅ Login successful! Your session is ready.
 User: /book Monday 10:00 wod  
 Bot: ✅ Class scheduled successfully!
      📅 Monday 10:00 - wod
-     The bot will automatically book this class on Saturday at 12:00 PM.
+     The bot will book this class when the week opens, on Sunday at 12:00.
 
 User: /status
 Bot: 📊 Your Status
@@ -164,13 +184,115 @@ Bot: 📊 Your Status
      • Monday 10:00 - wod
 ```
 
-## ⏰ **How the Saturday Booking Works**
+## 🏃 **`wodbook`: booking from the command line**
 
-1. **11:55 AM**: Bot starts up and prepares all user sessions
-2. **11:55-12:00**: Bot navigates to class schedule pages and waits
-3. **12:00 PM**: Booking buttons become available
-4. **12:00-12:05**: Bot attempts to book all scheduled classes in parallel
-5. **Results**: Users are notified of success/failure via Telegram
+A standalone binary that books the moment a week is published, with no Telegram
+and no database. Run it a few minutes before the opening; it authenticates,
+synchronises with the server's clock, waits, and books.
+
+```bash
+make build-wodbook
+cp cmd/wodbook/config.example.json config.json   # box, targets, timezone
+
+# credentials go in the environment, never in config.json
+cat >> .env <<'ENV'
+WODBUSTER_EMAIL=you@example.com
+WODBUSTER_PASSWORD=...
+ENV
+
+./build/wodbook -config config.json              # wait for the opening, then book
+```
+
+The config file holds *what* to book — a list of targets, which is a shape that
+does not fit in environment variables. Credentials are separate: `./.env` is
+picked up automatically, `-env other.env` names a different file, and an
+exported variable beats both. Note the names are `WODBUSTER_EMAIL` and
+`WODBUSTER_PASSWORD`; the older `cmd/script` reads `TEST_EMAIL` / `TEST_PASSWORD`
+from the same file, so you may need both pairs for now.
+
+### Trying it now, without booking anything
+
+```bash
+make rehearse                                    # = -now -dry -v
+```
+
+`-dry` does everything except send the booking request. `-now` skips the wait
+for the opening. Together they are a full dress rehearsal that can be run on any
+day of the week: a real login, the real published schedule, the real class ids
+resolved — and then it stops one request short of taking a place.
+
+Keeping them as two flags is deliberate. `-now` alone answers "can it book?",
+`-dry` alone answers "can it wait?". Those are different bugs, and finding out
+about both at noon on a Sunday costs a week.
+
+One catch worth knowing before the output confuses you: targets are written as a
+recurring weekday and resolved to the **next** date that falls on it, so a
+rehearsal must name a day the box has already published. Rehearsing on a Friday,
+`saturday` works and `monday` does not — Monday belongs to the week that opens on
+Sunday, so the run polls, never sees it, and exits with `race: day never
+published`. That is correct behaviour, not a failure of the rehearsal.
+
+> **Settled:** firespain publishes on **Sunday at 12:00** Europe/Madrid,
+> confirmed by live runs on 2026-09-20 and 2026-09-27. The bot and `wodbook`
+> now agree; the bot's opening lives in one place,
+> `usecase.DefaultOpening` (`internal/telegram/usecase/opening.go`).
+
+Full detail, including the exit codes and what a rehearsal still does not prove:
+[`pkg/wodbuster/README.md`](pkg/wodbuster/README.md).
+
+## ⏰ **How the weekly run works**
+
+1. **Sunday 11:50** — the cronjob wakes up, ten minutes before the opening.
+2. One goroutine per athlete: each logs in with their own stored credentials
+   (a browser, 3–15s), then syncs with WodBuster's own clock.
+3. Each run reads the server's countdown and trusts it over the configured
+   time when the two disagree by more than two seconds.
+4. **12:00** — the chase: poll until the week appears, then book, retrying
+   anything that is not a flat "no" until the class fills up, then taking the
+   waiting list.
+5. Results arrive in Telegram, per athlete.
+
+Athletes do not slow each other down: WodBuster serialises booking calls per
+athlete, not globally. Within one athlete the client queues its own calls, which
+is what stops three classes from colliding with each other — see
+[`pkg/wodbuster/README.md`](pkg/wodbuster/README.md).
+
+## 📦 **Releasing**
+
+```bash
+make release bump=patch     # or minor, major; defaults to patch
+```
+
+That dispatches the `Release` workflow on `main`. It runs CI, then builds the
+image for `linux/amd64` and `linux/arm64` and pushes it to Docker Hub, then
+tags the commit and opens a GitHub release. The version is computed from the
+tags already on `origin`, so nothing is tagged locally and two people cannot
+pick the same number.
+
+The image is pushed **before** the tag is created: a failed build leaves
+nothing behind, whereas a tag with no image behind it has to be deleted by hand
+before that version can be cut again.
+
+Each release publishes three tags — `vX.Y.Z`, `X.Y.Z` and `latest` — and bakes
+the version into `APP_VERSION`, so a running container can say which release it
+is.
+
+**One-time setup.** Under *Settings → Secrets and variables → Actions*:
+
+| Name | Kind | Purpose |
+|---|---|---|
+| `DOCKERHUB_USERNAME` | secret | Docker Hub account |
+| `DOCKERHUB_TOKEN` | secret | Docker Hub **access token**, not the password |
+| `DOCKERHUB_IMAGE` | variable (optional) | Full image name; defaults to `<username>/wodbuster-bot` |
+
+The workflow checks both secrets exist before it does anything else, so a
+missing one fails in seconds rather than after the build.
+
+**Running a release:**
+
+```bash
+WODBUSTER_IMAGE=<user>/wodbuster-bot:v1.2.3 docker compose up --no-build
+```
 
 ## 🧪 **Testing**
 
@@ -183,6 +305,20 @@ make test
 ```bash
 make test-integration
 ```
+
+### The client library
+
+`pkg/wodbuster` has no Mongo and no Telegram in it, so its tests need nothing
+installed and no Sunday:
+
+```bash
+go test -race ./pkg/... ./cmd/wodbook/...
+```
+
+They run against `wodbustertest`, a fake WodBuster that speaks the real
+protocol and can be told to publish late, run out of places, reject a booking or
+expire a session — including the case that matters most and that no real Sunday
+reproduces on demand: losing the race.
 
 ## 📊 **Database Schema**
 

@@ -17,6 +17,18 @@ type Config struct {
 	LoggerLevel   slog.Level `envconfig:"LOGGING_LEVEL" default:"DEBUG"`
 	WODBusterURL  string     `envconfig:"WODBUSTER_URL" default:"https://wodbuster.com"`
 
+	// Box is the centre's subdomain: firespain.wodbuster.com.
+	Box string `envconfig:"WODBUSTER_BOX" default:"firespain"`
+
+	// Timezone the opening is defined in. The opening is a wall-clock time at
+	// the gym, so it must not follow the server's zone.
+	Timezone string `envconfig:"WODBUSTER_TIMEZONE" default:"Europe/Madrid"`
+
+	// ChromePath points at the browser the login drives. Empty lets chromedp
+	// search the usual locations, which works on a developer's machine; the
+	// container sets it explicitly.
+	ChromePath string `envconfig:"WODBUSTER_CHROME_PATH"`
+
 	// MongoDB configuration
 	MongoURI    string `envconfig:"MONGO_URI" default:"mongodb://localhost:27017"`
 	MongoDB     string `envconfig:"MONGO_DB" default:"wodbuster"`

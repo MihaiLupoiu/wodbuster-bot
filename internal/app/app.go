@@ -9,11 +9,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/health"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/usecase"
-	"github.com/MihaiLupoiu/wodbuster-bot/internal/wodbuster"
 )
 
 type App struct {
@@ -41,9 +41,16 @@ func Initialize(envFile string) (*App, error) {
 }
 
 func New(config *Config) (*App, error) {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	// The configured level, not a hardcoded one: LOGGING_LEVEL defaults to
+	// DEBUG and was being ignored here, which is why the library's own request
+	// logging never appeared.
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: config.LoggerLevel,
+		}))
+	}
+	logger.Info("log level", "level", config.LoggerLevel.String())
 
 	// Initialize storage
 	var store usecase.Storage
@@ -61,22 +68,22 @@ func New(config *Config) (*App, error) {
 		return nil, fmt.Errorf("unsupported storage type: %s", config.StorageType)
 	}
 
-	// Initialize WODBuster client with headless mode and anti-detection
-	client, err := wodbuster.NewClient(config.WODBusterURL,
-		wodbuster.WithLogger(logger),
-		wodbuster.WithHeadlessMode(true),
-	)
+	// The opening is a wall-clock time at the gym, so it is defined in the
+	// gym's zone and never the server's.
+	loc, err := time.LoadLocation(config.Timezone)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create WODBuster client: %w", err)
+		return nil, fmt.Errorf("invalid timezone %q: %w", config.Timezone, err)
 	}
+	opening := usecase.DefaultOpening(loc)
 
-	// Create booking scheduler with simplified dependencies
-	bookingScheduler := usecase.NewBookingScheduler(store, client, logger)
+	booker := booking.New(config.Box, loc, logger,
+		booking.WithChromePath(config.ChromePath))
 
-	// Create manager with all dependencies injected
+	bookingScheduler := usecase.NewBookingScheduler(store, booker, opening, config.EncryptionKey, logger)
+
 	manager := usecase.NewManager(
 		store,
-		client,
+		booker,
 		config.EncryptionKey,
 		bookingScheduler,
 		logger,
@@ -87,6 +94,9 @@ func New(config *Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Telegram bot: %w", err)
 	}
+
+	// Results of the Sunday run go back to the athlete who asked for them.
+	bookingScheduler.SetNotifier(bot)
 
 	// Create health checker
 	healthChecker := health.NewChecker(store, logger, config.Version)
@@ -106,7 +116,8 @@ func (a *App) Start(ctx context.Context) error {
 	a.logger.Info("Starting WODBuster Bot",
 		"version", a.config.Version,
 		"storage_type", a.config.StorageType,
-		"wodbuster_url", a.config.WODBusterURL)
+		"box", a.config.Box,
+		"opening", a.bookingScheduler.GetScheduleInfo())
 
 	// Start health check server
 	go func() {
@@ -116,7 +127,7 @@ func (a *App) Start(ctx context.Context) error {
 		}
 	}()
 
-	// Start booking scheduler at app level (Saturday cronjob)
+	// Start the weekly booking run
 	if err := a.bookingScheduler.Start(); err != nil {
 		a.logger.Error("Failed to start booking scheduler", "error", err)
 		return fmt.Errorf("failed to start booking scheduler: %w", err)
@@ -148,8 +159,7 @@ func (a *App) Stop() {
 }
 
 func (a *App) Execute() error {
-	// Start the Saturday booking scheduler
-	a.logger.Info("Starting Saturday booking scheduler...")
+	a.logger.Info("Starting the weekly booking scheduler...")
 	if err := a.bookingScheduler.Start(); err != nil {
 		a.logger.Error("Failed to start booking scheduler", "error", err)
 		return err
@@ -181,7 +191,7 @@ func (a *App) Execute() error {
 
 	a.logger.Info("🤖 WODBuster Bot is running...",
 		"health_check_port", a.config.HealthCheckPort,
-		"wodbuster_url", a.config.WODBusterURL)
+		"box", a.config.Box)
 
 	// Wait for either a signal or an error
 	select {

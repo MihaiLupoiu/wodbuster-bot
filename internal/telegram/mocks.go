@@ -7,6 +7,7 @@ package telegram
 import (
 	"context"
 
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/usecase"
 	mock "github.com/stretchr/testify/mock"
@@ -368,6 +369,74 @@ func (_c *MockBotManager_LogInAndSave_Call) Return(err error) *MockBotManager_Lo
 }
 
 func (_c *MockBotManager_LogInAndSave_Call) RunAndReturn(run func(ctx context.Context, chatID int64, email string, password string) error) *MockBotManager_LogInAndSave_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Rehearse provides a mock function for the type MockBotManager
+func (_mock *MockBotManager) Rehearse(ctx context.Context, chatID int64) ([]booking.Outcome, error) {
+	ret := _mock.Called(ctx, chatID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Rehearse")
+	}
+
+	var r0 []booking.Outcome
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64) ([]booking.Outcome, error)); ok {
+		return returnFunc(ctx, chatID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64) []booking.Outcome); ok {
+		r0 = returnFunc(ctx, chatID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]booking.Outcome)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, int64) error); ok {
+		r1 = returnFunc(ctx, chatID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockBotManager_Rehearse_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Rehearse'
+type MockBotManager_Rehearse_Call struct {
+	*mock.Call
+}
+
+// Rehearse is a helper method to define mock.On call
+//   - ctx context.Context
+//   - chatID int64
+func (_e *MockBotManager_Expecter) Rehearse(ctx interface{}, chatID interface{}) *MockBotManager_Rehearse_Call {
+	return &MockBotManager_Rehearse_Call{Call: _e.mock.On("Rehearse", ctx, chatID)}
+}
+
+func (_c *MockBotManager_Rehearse_Call) Run(run func(ctx context.Context, chatID int64)) *MockBotManager_Rehearse_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 int64
+		if args[1] != nil {
+			arg1 = args[1].(int64)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockBotManager_Rehearse_Call) Return(outcomes []booking.Outcome, err error) *MockBotManager_Rehearse_Call {
+	_c.Call.Return(outcomes, err)
+	return _c
+}
+
+func (_c *MockBotManager_Rehearse_Call) RunAndReturn(run func(ctx context.Context, chatID int64) ([]booking.Outcome, error)) *MockBotManager_Rehearse_Call {
 	_c.Call.Return(run)
 	return _c
 }

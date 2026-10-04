@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/utils"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -64,13 +65,21 @@ func (h *LoginHandler) Handle(update tgbotapi.Update) {
 	// 	return
 	// }
 
+	// A login drives a browser against the real site, so it takes seconds and
+	// is worth timing: a slow one here is the first sign of trouble on Sunday.
+	started := time.Now()
+	slog.Info("login attempt", "chat_id", update.Message.Chat.ID, "email", email)
+
 	if err := h.manager.LogInAndSave(ctx, update.Message.Chat.ID, email, password); err != nil {
 		h.sendMessage(update.Message.Chat.ID,
-			"Failed to save login information. Please try again later.")
-		slog.Error("Failed to save user login", "error", err, "chat_id", update.Message.Chat.ID)
+			"Login failed: "+err.Error()+"\nCheck your email and password and try again.")
+		slog.Error("login failed", "error", err, "chat_id", update.Message.Chat.ID,
+			"email", email, "took", time.Since(started).Round(time.Millisecond))
 		return
 	}
 
+	slog.Info("login succeeded", "chat_id", update.Message.Chat.ID, "email", email,
+		"took", time.Since(started).Round(time.Millisecond))
 	h.sendMessage(update.Message.Chat.ID,
 		"Login successful! You can now use /book and /remove commands.")
 }

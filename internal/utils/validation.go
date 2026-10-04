@@ -44,27 +44,35 @@ func ValidatePassword(password string) error {
 	return nil
 }
 
+var validDays = map[string]time.Weekday{
+	"monday":    time.Monday,
+	"tuesday":   time.Tuesday,
+	"wednesday": time.Wednesday,
+	"thursday":  time.Thursday,
+	"friday":    time.Friday,
+	"saturday":  time.Saturday,
+	"sunday":    time.Sunday,
+}
+
 // ValidateDay validates day name (Monday, Tuesday, etc.)
 func ValidateDay(day string) error {
 	if strings.TrimSpace(day) == "" {
 		return ErrEmptyInput
 	}
-
-	validDays := map[string]bool{
-		"monday":    true,
-		"tuesday":   true,
-		"wednesday": true,
-		"thursday":  true,
-		"friday":    true,
-		"saturday":  true,
-		"sunday":    true,
-	}
-
-	if !validDays[strings.ToLower(day)] {
+	if _, ok := validDays[strings.ToLower(strings.TrimSpace(day))]; !ok {
 		return ErrInvalidDay
 	}
-
 	return nil
+}
+
+// ParseWeekday turns a validated day name into a time.Weekday, so that the
+// booking layer never has to parse a day a second time and disagree.
+func ParseWeekday(day string) (time.Weekday, error) {
+	wd, ok := validDays[strings.ToLower(strings.TrimSpace(day))]
+	if !ok {
+		return 0, ErrInvalidDay
+	}
+	return wd, nil
 }
 
 // ValidateTime validates time format (HH:MM)

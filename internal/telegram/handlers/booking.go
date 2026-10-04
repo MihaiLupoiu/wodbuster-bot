@@ -103,6 +103,8 @@ func (h *BookingHandler) Handle(update tgbotapi.Update) {
 	// 	return
 	// }
 
+	slog.Info("class scheduled", "chat_id", update.Message.Chat.ID,
+		"day", day, "hour", hour, "class_type", classType)
 	h.sendMessage(update.Message.Chat.ID,
 		fmt.Sprintf("Class scheduled successfully! %s at %s for %s", classType, hour, day))
 }

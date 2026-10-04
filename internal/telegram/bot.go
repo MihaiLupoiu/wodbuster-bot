@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/handlers"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/usecase"
@@ -23,6 +25,7 @@ type BotManager interface {
 	CancelBooking(chatID int64) bool
 	TestUserSession(ctx context.Context, chatID int64) error
 	GetScheduleInfo() string
+	Rehearse(ctx context.Context, chatID int64) ([]booking.Outcome, error)
 }
 
 type Bot struct {
@@ -115,12 +118,32 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 		return
 	}
 
+	chatID := update.Message.Chat.ID
+	command := update.Message.Command()
+	started := time.Now()
+
+	// Every message the bot receives, with its arguments redacted when they
+	// could be a password. Logging the raw text would put credentials in the
+	// container logs, which is the one thing this bot must never do.
+	b.logger.Info("message received",
+		"chat_id", chatID,
+		"user", update.Message.From.UserName,
+		"command", command,
+		"args", redactArgs(command, update.Message.CommandArguments()))
+
 	// Check rate limit
-	if !b.rateLimiter.Allow(update.Message.Chat.ID) {
-		b.sendMessage(update.Message.Chat.ID,
+	if !b.rateLimiter.Allow(chatID) {
+		b.logger.Warn("rate limited", "chat_id", chatID, "command", command)
+		b.sendMessage(chatID,
 			"You're sending commands too quickly. Please wait a moment before trying again.")
 		return
 	}
+
+	defer func() {
+		b.logger.Info("message handled",
+			"chat_id", chatID, "command", command,
+			"took", time.Since(started).Round(time.Millisecond))
+	}()
 
 	switch update.Message.Command() {
 	case "start":
@@ -140,6 +163,8 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 		b.handleActiveBookings(update)
 	case "schedule":
 		b.handleSchedule(update)
+	case "rehearse":
+		b.handleRehearse(update)
 	case "help":
 		b.sendMessage(update.Message.Chat.ID,
 			"🤖 **WODBuster Bot Commands**\n\n"+
@@ -151,13 +176,14 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 				"  Example: `/book Monday 10:00 wod`\n"+
 				"• `/active` - Show active booking attempts\n"+
 				"• `/status` - Show your account status\n"+
-				"• `/schedule` - Show next booking schedule\n\n"+
+				"• `/schedule` - Show when the next run happens\n"+
+				"• `/rehearse` - Try your classes now, booking nothing\n\n"+
 				"**Other:**\n"+
 				"• `/help` - Show this help message\n\n"+
 				"**How it works:**\n"+
 				"1. Login with your WODBuster credentials\n"+
 				"2. Schedule classes with `/book`\n"+
-				"3. Every Saturday at 11:55, the bot will automatically book your classes when they open at 12:00!")
+				"3. On Sunday the bot wakes up before noon and books your classes the moment the week opens!")
 	default:
 		b.sendMessage(update.Message.Chat.ID,
 			"I don't know that command. Use /help to see available commands")
@@ -232,6 +258,52 @@ func (b *Bot) handleActiveBookings(update tgbotapi.Update) {
 	b.sendMessage(chatID, message)
 }
 
+// Notify delivers a booking result to an athlete. It is how the Sunday run
+// reports back: nobody is watching the logs at noon.
+func (b *Bot) Notify(chatID int64, text string) {
+	b.sendMessage(chatID, text)
+}
+
+// handleRehearse runs the athlete's classes right now against the published
+// week and books nothing, so a broken login or a renamed class is found on a
+// Tuesday rather than at the opening.
+func (b *Bot) handleRehearse(update tgbotapi.Update) {
+	ctx := context.Background()
+	chatID := update.Message.Chat.ID
+
+	if !b.manager.IsAuthenticated(ctx, chatID) {
+		b.sendMessage(chatID, "❌ You are not authenticated. Please use /login first.")
+		return
+	}
+
+	b.sendMessage(chatID, "🧪 Rehearsing: logging in and resolving your classes. Nothing will be booked.\n"+
+		"This takes a few seconds.")
+
+	outcomes, err := b.manager.Rehearse(ctx, chatID)
+	if err != nil {
+		b.sendMessage(chatID, "❌ Rehearsal failed: "+err.Error())
+		return
+	}
+
+	msg := "🧪 **Rehearsal results**\n\n"
+	for _, o := range outcomes {
+		msg += formatOutcome(o) + "\n"
+	}
+	msg += "\nA class the box has not published yet cannot be found — that is expected " +
+		"before the opening, not a failure of your setup."
+	b.sendMessage(chatID, msg)
+}
+
+func formatOutcome(o booking.Outcome) string {
+	if o.Err != nil {
+		return "❌ " + o.Class + ": " + o.Err.Error()
+	}
+	if o.Status == "dry-run" {
+		return "✅ " + o.Class + " — found and bookable"
+	}
+	return "• " + o.Class + " — " + o.Status
+}
+
 func (b *Bot) handleSchedule(update tgbotapi.Update) {
 	chatID := update.Message.Chat.ID
 	scheduleInfo := b.manager.GetScheduleInfo()
@@ -245,6 +317,39 @@ func (b *Bot) sendMessage(chatID int64, text string) {
 	msg.ParseMode = tgbotapi.ModeMarkdown
 
 	if _, err := b.api.Send(msg); err != nil {
-		b.logger.Error("Failed to send message", "error", err, "chat_id", chatID)
+		b.logger.Error("could not send message", "error", err, "chat_id", chatID,
+			"text", firstLine(text))
+		return
 	}
+	b.logger.Debug("message sent", "chat_id", chatID, "chars", len(text), "text", firstLine(text))
+}
+
+// redactArgs keeps credentials out of the logs. /login carries an email and a
+// password; everything else carries a day and a class name.
+func redactArgs(command, args string) string {
+	if args == "" {
+		return ""
+	}
+	switch command {
+	case "login":
+		fields := strings.Fields(args)
+		if len(fields) > 0 {
+			return fields[0] + " <redacted>"
+		}
+		return "<redacted>"
+	default:
+		return args
+	}
+}
+
+// firstLine keeps a reply recognisable in the logs without reproducing the
+// whole thing, which for /status or a results message is a screenful.
+func firstLine(text string) string {
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		text = text[:i]
+	}
+	if len(text) > 80 {
+		return text[:80] + "..."
+	}
+	return text
 }

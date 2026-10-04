@@ -1,0 +1,211 @@
+# Pending work on `pkg/wodbuster` and `cmd/wodbook`
+
+What is left from the review of the two library patches, against
+`docs/wodbuster-api-design_1.md`. The three blockers (cookie jar sharing,
+`WithUserAgent`, no CLI tests) are already fixed in `a6c5323`.
+
+Nothing here blocks a real Sunday except items 5 and 6, which decide whether a
+goal survives a bad poll at T+0.
+
+---
+
+## 4. `Credentials` and the authenticator contract live in the wrong package
+
+`pkg/wodbuster/browserauth/browserauth.go:125` defines `Credentials`, and there
+is no `Authenticator` interface anywhere. The design (§5) puts both in the core.
+
+As it stands, the planned `formauth` would have to import `browserauth` just to
+name its own parameter type, and `chain{formauth, browserauth}` has no interface
+to chain against. A consumer also cannot express "some authenticator" in a
+constructor.
+
+- Move `Credentials` to `pkg/wodbuster`.
+- Do **not** add an `Authenticator` interface next to the implementation —
+  declare the one-method interface at the call site that needs it
+  (`cmd/wodbook`, later the bot's scheduler).
+
+Cheap now, a breaking change for every caller once `formauth` exists.
+
+## 5. `race.Chase` polls once per goal instead of once per date
+
+`pkg/wodbuster/race/race.go:178` starts a goroutine per goal, and each one runs
+its own `c.Schedule(ctx, g.Date)` loop (`race.go:196`). Three targets on the
+same Monday means three independent `LoadClass` loops at 4/s and three separate
+id resolutions of the same response.
+
+Design §3.4 wants a single explorer per date: one `LoadClass`, one version of
+the truth, ids fanned out to everyone waiting on that day.
+
+The doc is explicit that at this scale it is a simplification rather than a
+necessity, so shipping as is is defensible — but then say so in a comment, so
+the next reader does not think it was an oversight. If it does get fixed: group
+goals by `Date`, poll once per group, fan the resolved `Schedule` out.
+
+## 6. `chaseOne` gives up forever when the class is not in the day yet
+
+`pkg/wodbuster/race/race.go:211` — on `ErrClassNotFound` the goal returns
+immediately and is dead for the rest of the run.
+
+That is the right answer for a typo in the class name and the wrong one at T+0:
+if a day's rows appear incrementally, a single unlucky poll can see `Data`
+non-empty but not yet contain the 07:00 Wod. One bad millisecond and the goal
+never recovers, with the deadline still 89 seconds away.
+
+Keep polling on `ErrClassNotFound` until `GiveUpAfter`, and report the last
+error if it never shows up. Retrying costs one request per `PollEvery` and only
+happens in the case that is currently unrecoverable.
+
+## 7. `Published` is inferred from `len(Data) > 0`; `TipoNoClases` is dead
+
+`pkg/wodbuster/wire.go:32` decides publication from whether any classes came
+back, while `TipoNoClases` (`wire.go:15`) is parsed and never read — the field
+the server actually uses to say `"NoCalendar"`.
+
+A published day with no classes (a holiday, a closed box) is therefore
+indistinguishable from an unpublished one: `race` keeps polling it until
+`GiveUpAfter` and then reports `ErrNeverPublished`, which is a lie.
+
+Use `TipoNoClases` for the decision and keep `len(Data)` as the fallback for
+values we have not seen. `wodbustertest` already serves `"NoCalendar"`
+(`wodbustertest/server.go`), so the test for this costs nothing.
+
+## 8. The waiting-list error is swallowed
+
+Partly addressed by the retry rework: `joinWaitlist` now logs the failure at
+`Warn` and carries on chasing the booking, so a broken waitlist call is no
+longer invisible while it happens.
+
+What is still open is the *result*. On the way out, `Result.Err` reports the
+booking error alone; the waitlist error is nowhere in it. A run that failed
+because the waiting list is broken still reads, afterwards, exactly like a class
+that was simply full — which is the one diagnosis you would act on.
+
+Join the two with `errors.Join`, or put the waitlist error in `Result.Err` and
+keep the booking error as its cause.
+
+## 9. Transient HTTP failures retry without backoff, if at all
+
+Every retry in the stack is a fixed-interval loop written by hand:
+`race` retries a refused booking every `retryEveryMs`, and a failed
+`c.Schedule` poll simply comes round again on the next `pollEvery`. Below that,
+`Client` does not retry at all — a connection reset or a 502 at T+0, when the
+box's server is at its busiest, is returned as a plain error and the caller
+treats it like a rejection.
+
+That is the case where `github.com/cenkalti/backoff/v5` earns its keep:
+exponential backoff with jitter on transport-level failures, in the client's
+request path (`client.go:108` `get`), not in the race loop.
+
+The race loop should stay hand-rolled, and the reason is worth writing down so
+this does not get "fixed" later: it deliberately does **not** back off — at an
+opening the value of an attempt collapses within seconds, so steady pressure is
+the policy — and it has four terminal outcomes, two of which are successes
+discovered out of band (`waitlisted`, `already-booked` from the status read).
+`backoff.Retry` models one success and one permanent error; expressing the other
+two through `backoff.Permanent` plus unwrapping inverts control to save about
+twenty lines and makes the interesting part — which refusal means what — harder
+to read.
+
+Note `cenkalti/backoff/v4` is already in the module graph transitively, via
+testcontainers. v5 would be a new direct dependency.
+
+## 10. `Cancel` does not implement the server's confirmation round trip
+
+Confirmed from the site's JavaScript. `Calendario_Borrar` can answer
+`NeedConfirm: true`, which is not a rejection — it is the server asking a
+question, and the answer is the *same call again* with `&confirm=1`:
+
+```js
+success: function(n){
+  n.NeedConfirm ? confirmWithPromise("Estás cancelando fuera de hora. La clase contará como realizada...")
+      .then(function(n){ n && ii(i,f,true) })   // calls again with &confirm=1
+    : o(n)
+}
+```
+
+`client.go:189` `Cancel` knows nothing about this. A late cancellation — the
+case where it matters, because the class counts as attended — comes back as a
+`*APIError` today, and the place is never given up. This was §10 of the design
+doc as an open question ("may need a confirm=1"); it is now answered.
+
+`Cancel` is outside v1, so nothing is blocked. But the failure mode is someone
+calling it, seeing an error, and not realising the server was waiting for an
+answer — so note it on the method before that happens. Fixing it means
+`wireResult` learning `NeedConfirm`, and `action` growing a way to say yes,
+which should be an explicit opt-in from the caller and not an automatic retry:
+"the class will count as attended" is a decision, not a detail.
+
+For the neighbouring flag, which is a different thing entirely:
+`NeedAdminConfirm` on an *inscription* is the administrator route for signing
+somebody else up to a class that refuses them. As an athlete it should never
+appear; if it did, `action` logs it and today still reports success. Worth
+tightening only if it is ever seen.
+
+---
+
+## Cleanups
+
+- [x] **Lint.** `TimeOfDay.api` was unused and a test had `t.Sub(time.Now())`.
+      Both fixed in `a6c5323`; `golangci-lint` is clean on the new packages.
+
+- [ ] **Four hand-rolled copies of things the stdlib has.** `min`
+      (`client.go:238`, a builtin since Go 1.21), `discardHandler`
+      (`client.go:245`, `slog.DiscardHandler` since Go 1.24), `race.discard`
+      (`race.go:115`) and `browserauth.io_discard`
+      (`browserauth.go:176`) — the last two are both `io.Discard`. `io_discard`
+      is not a Go name either. The module is on `go 1.24.4`, so all four can go.
+
+- [ ] **`wodbustertest`'s package example does not work.**
+      `wodbustertest/server.go:13` shows
+      `wodbuster.NewClient(srv.Session())` with no
+      `wodbuster.WithHTTPClient(srv.HTTPClient())`. The session's box is
+      `"fake"`, so as written the example resolves `fake.wodbuster.com` and
+      leaves the machine. It is the first thing anyone copies.
+
+- [ ] **`browserauth` logs the athlete's email at `Info`**
+      (`browserauth.go:211`). Fine for one person on a VPS, not once the bot
+      runs for ten. `Debug`, or log the box only.
+
+- [x] **Nothing builds `wodbook`.** Added `make build-wodbook` and
+      `make rehearse` (a `-now -dry -v` run). Still worth adding to CI if the
+      CLI is meant to stay the library's proving ground.
+
+- [ ] **`race` tests run on the wall clock** (~4s per run) because
+      `Options.Clock` is only consulted in `WaitUntil` and `OpensAt` —
+      `Chase`'s deadline is a raw `time.Now()` (`race.go:172`), so a fake clock
+      cannot drive them. Route every `time.Now()` in `race` through `o.Clock`
+      and the timing tests become instant and deterministic.
+
+- [ ] **Tests use the stdlib, the rest of the repo uses testify.** Not worth a
+      rewrite; worth deciding, so the next test file does not have to guess.
+      (`cmd/wodbook/config_test.go` follows the repo and uses testify.)
+
+---
+
+## Adjacent, and not part of the patches
+
+- [x] **The bot and the CLI disagreed about when the week opens.** Settled by
+      two live runs (2026-09-20, 2026-09-27): **Sunday 12:00 Europe/Madrid**.
+      The bot's Saturday 11:55 cron was wrong and fired on a day when nothing
+      publishes. The opening is now one value in one place,
+      `usecase.DefaultOpening` (`internal/telegram/usecase/opening.go`), and the
+      scheduler derives its cron from it.
+
+- [x] **`internal/models/user.go` stored a single cookie.** Resolved by not
+      storing a session at all. A WodBuster session is a session cookie with no
+      expiry of its own, dropped by the server after a while idle, so one saved
+      on Monday is worthless by Sunday. Every run logs in fresh with the
+      (encrypted) password, which is what the bot already kept. The cookie
+      field, `SessionValid`, `SessionExpiresAt` and the session helpers are
+      gone from the model.
+
+- [ ] **`internal/booking.Run` and `cmd/wodbook`'s `run` are the same sequence
+      twice.** Authenticate, sync the clock, resolve targets, read the server
+      countdown, wait, ping, chase. Two copies that must stay in step, and the
+      CLI is the one that gets exercised weekly. Worth extracting once the bot
+      has had a real Sunday — not before, because the duplication is currently
+      the only thing keeping the CLI independent of the bot's config shape.
+
+- [ ] **The bot never cancels.** `/book` adds a class; nothing removes one, and
+      `Cancel` is deliberately incomplete (item 10). A user who changes their
+      mind has to do it on the website.
