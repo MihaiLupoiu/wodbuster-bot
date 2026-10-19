@@ -96,24 +96,25 @@ func ValidateTime(timeStr string) error {
 	return nil
 }
 
-// ValidateClassType validates class type
+// classNameRegex is what a WodBuster class name looks like: words, digits and
+// a little punctuation ("Wod", "Open Box", "Hyrox", "Halterofilia +"). The
+// boxes name their own classes, so this checks the shape and not a list; the
+// run compares it, case-insensitively, against the names on the day.
+var classNameRegex = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N} .&+'/-]*$`)
+
+const maxClassNameLen = 40
+
+// ValidateClassType checks that a class name is plausible. It used to accept
+// only wod, open, strength, cardio and yoga, which turned away real classes
+// like Hyrox without the athlete knowing why.
 func ValidateClassType(classType string) error {
-	if strings.TrimSpace(classType) == "" {
+	classType = strings.TrimSpace(classType)
+	if classType == "" {
 		return ErrEmptyInput
 	}
-
-	validTypes := map[string]bool{
-		"wod":      true,
-		"open":     true,
-		"strength": true,
-		"cardio":   true,
-		"yoga":     true,
-	}
-
-	if !validTypes[strings.ToLower(classType)] {
+	if len([]rune(classType)) > maxClassNameLen || !classNameRegex.MatchString(classType) {
 		return ErrInvalidClassType
 	}
-
 	return nil
 }
 

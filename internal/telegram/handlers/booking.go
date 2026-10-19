@@ -42,17 +42,20 @@ func (h *BookingHandler) Handle(update tgbotapi.Update) {
 		return
 	}
 
-	args := strings.Split(update.Message.Text, " ")
-	if len(args) != 4 {
+	// Fields, not Split: a double space used to make a valid command look
+	// malformed. The class name is everything after the hour, because the
+	// box's names can be more than one word ("Open Box").
+	args := strings.Fields(update.Message.Text)
+	if len(args) < 4 {
 		h.sendMessage(update.Message.Chat.ID,
-			"Please provide day and hour: /book <day> <hour> <class-type> (e.g., /book Monday 10:00 wod)")
+			"Please provide day, hour and class: /book <day> <hour> <class> (e.g., /book Monday 10:00 wod)")
 		return
 	}
 
 	// Sanitize inputs
 	rawDay := utils.SanitizeInput(args[1])
 	rawHour := utils.SanitizeInput(args[2])
-	rawClassType := utils.SanitizeInput(args[3])
+	rawClassType := utils.SanitizeInput(strings.Join(args[3:], " "))
 
 	// Validate inputs
 	if err := utils.ValidateDay(rawDay); err != nil {
@@ -69,7 +72,7 @@ func (h *BookingHandler) Handle(update tgbotapi.Update) {
 
 	if err := utils.ValidateClassType(rawClassType); err != nil {
 		h.sendMessage(update.Message.Chat.ID,
-			"Invalid class type. Available types: wod, open, strength, cardio, yoga")
+			"Invalid class name. Use the name as the box shows it in WodBuster (e.g., Wod, Open Box, Hyrox)")
 		return
 	}
 
@@ -96,12 +99,6 @@ func (h *BookingHandler) Handle(update tgbotapi.Update) {
 			"class_type", classType)
 		return
 	}
-
-	// if err := h.wodbuster.BookClass(session.Username, session.Password, day, hour); err != nil {
-	// 	h.sendMessage(update.Message.Chat.ID,
-	// 		"Failed to book class. Please try again later.")
-	// 	return
-	// }
 
 	slog.Info("class scheduled", "chat_id", update.Message.Chat.ID,
 		"day", day, "hour", hour, "class_type", classType)

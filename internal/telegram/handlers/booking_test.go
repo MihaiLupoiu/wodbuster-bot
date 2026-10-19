@@ -45,6 +45,23 @@ func TestBookingHandler_Handle(t *testing.T) {
 			},
 		},
 		{
+			// Jaime's Hyrox on 2026-10-14 was turned away by a list of five
+			// class names; Manuel's "open box" by the four-word split.
+			name:   "a class the box names itself, in more than one word",
+			input:  "/book  friday   17:30 open box",
+			isAuth: true,
+			setupMocks: func(api *MockBookingBotAPI, manager *MockBookingManager) {
+				manager.EXPECT().IsAuthenticated(mock.Anything, testChatID).Return(true)
+				manager.EXPECT().ScheduleBookClass(mock.Anything, testChatID, models.ClassBookingSchedule{
+					ID:        "Friday-17:30-Open Box",
+					Day:       "Friday",
+					Hour:      "17:30",
+					ClassType: "Open Box",
+				}).Return(nil)
+				api.EXPECT().Send(mock.Anything).Return(tgbotapi.Message{}, nil)
+			},
+		},
+		{
 			name:   "invalid format",
 			input:  "/book Monday",
 			isAuth: true,
@@ -52,7 +69,7 @@ func TestBookingHandler_Handle(t *testing.T) {
 				manager.EXPECT().IsAuthenticated(mock.Anything, testChatID).Return(true)
 				api.EXPECT().Send(mock.MatchedBy(func(c tgbotapi.Chattable) bool {
 					msg, ok := c.(tgbotapi.MessageConfig)
-					return ok && msg.Text == "Please provide day and hour: /book <day> <hour> <class-type> (e.g., /book Monday 10:00 wod)"
+					return ok && msg.Text == "Please provide day, hour and class: /book <day> <hour> <class> (e.g., /book Monday 10:00 wod)"
 				})).Return(tgbotapi.Message{}, nil)
 			},
 		},
