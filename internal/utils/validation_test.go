@@ -131,8 +131,14 @@ func TestValidateClassType(t *testing.T) {
 		{"valid type - yoga", "yoga", false},
 		{"empty type", "", true},
 		{"whitespace only", "   ", true},
-		{"invalid type", "invalid", true},
-		{"partial type", "wo", true},
+		// The box names its own classes; a list of five turned real ones away.
+		{"box class - Hyrox", "Hyrox", false},
+		{"multi-word class", "Open Box", false},
+		{"accented class", "Halterofilia Básica", false},
+		{"class with punctuation", "Wod +", false},
+		{"leading punctuation", "-wod", true},
+		{"markup", "<b>wod</b>", true},
+		{"too long", "a very long class name that nobody would ever type in", true},
 	}
 
 	for _, tt := range tests {

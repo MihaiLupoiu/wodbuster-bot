@@ -32,9 +32,10 @@ type Storage interface {
 	GetUser(ctx context.Context, chatID int64) (models.User, bool)
 	SaveClassBookingSchedule(ctx context.Context, chatID int64, class models.ClassBookingSchedule) error
 	GetClassBookingSchedules(ctx context.Context, chatID int64) ([]models.ClassBookingSchedule, bool)
-	// Booking attempt methods
+	// ListUsers is every athlete; the weekly run books from their schedules.
+	ListUsers(ctx context.Context) ([]models.User, error)
+	// Booking attempts are the history of each weekly run, one per class and week.
 	SaveBookingAttempt(ctx context.Context, attempt models.BookingAttempt) error
-	GetAllPendingBookings(ctx context.Context) ([]models.BookingAttempt, error)
 	UpdateBookingStatus(ctx context.Context, attemptID string, status string, errorMsg string) error
 }
 
@@ -75,7 +76,7 @@ func NewManager(
 	}
 }
 
-// StartBookingScheduler starts the Saturday cronjob
+// StartBookingScheduler starts the weekly cronjob
 func (m *Manager) StartBookingScheduler() error {
 	return m.bookingScheduler.Start()
 }
@@ -107,16 +108,23 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 		return err
 	}
 
+	now := time.Now()
 	user := models.User{
 		ChatID:                chatID,
-		IsAuthenticated:       true,
-		Email:                 email,
-		Password:              encryptedPassword,
 		ClassBookingSchedules: []models.ClassBookingSchedule{},
-		LastLoginTime:         time.Now(),
-		CreatedAt:             time.Now(),
-		UpdatedAt:             time.Now(),
+		CreatedAt:             now,
 	}
+	// Logging in again — a changed password, a /login to be sure — must not
+	// cost the athlete their classes. It used to: the user was rebuilt from
+	// scratch and the save replaced the whole document.
+	if existing, ok := m.storage.GetUser(ctx, chatID); ok {
+		user = existing
+	}
+	user.IsAuthenticated = true
+	user.Email = email
+	user.Password = encryptedPassword
+	user.LastLoginTime = now
+	user.UpdatedAt = now
 
 	m.logger.Info("Successfully validated login and saved user", "chat_id", chatID, "email", email)
 	return m.storage.SaveUser(ctx, user)
@@ -131,35 +139,10 @@ func (m *Manager) GetDecryptedPassword(ctx context.Context, chatID int64) (strin
 	return utils.DecryptPassword(user.Password, m.encryptionKey)
 }
 
+// ScheduleBookClass adds a class to the athlete's weekly schedule. Every
+// Sunday run books whatever is on the schedule; there is nothing else to queue.
 func (m *Manager) ScheduleBookClass(ctx context.Context, chatID int64, class models.ClassBookingSchedule) error {
-	// Save the class booking schedule to user's profile
-	err := m.storage.SaveClassBookingSchedule(ctx, chatID, class)
-	if err != nil {
-		return err
-	}
-
-	// Create a booking attempt for the Saturday cronjob
-	bookingAttempt := models.BookingAttempt{
-		ID:          fmt.Sprintf("%d-%s-%s-%s-%d", chatID, class.Day, class.Hour, class.ClassType, time.Now().Unix()),
-		ChatID:      chatID,
-		Day:         class.Day,
-		Hour:        class.Hour,
-		ClassType:   class.ClassType,
-		Status:      "pending",
-		AttemptTime: m.nextOpening(), // When the booking should be attempted
-		RetryCount:  0,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
-
-	return m.storage.SaveBookingAttempt(ctx, bookingAttempt)
-}
-
-// nextOpening is when the coming week is published. Sunday 12:00 Madrid,
-// confirmed by live runs on 2026-09-20 and 2026-09-27; the bot used to assume
-// Saturday, which is a day on which nothing publishes.
-func (m *Manager) nextOpening() time.Time {
-	return m.bookingScheduler.opening.Next(time.Now())
+	return m.storage.SaveClassBookingSchedule(ctx, chatID, class)
 }
 
 // GetActiveBookings returns currently active booking attempts

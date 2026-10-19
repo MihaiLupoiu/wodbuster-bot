@@ -48,9 +48,7 @@ func New(config *Config) (*App, error) {
 	// logging never appeared.
 	logger := config.Logger
 	if logger == nil {
-		logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: config.LoggerLevel,
-		}))
+		logger = config.NewLogger()
 	}
 	logger.Info("log level", "level", config.LoggerLevel.String())
 
@@ -85,6 +83,7 @@ func New(config *Config) (*App, error) {
 
 	booker := booking.New(config.Box, loc, logger,
 		booking.WithChromePath(config.ChromePath),
+		booking.WithDiagnosticsDir(config.DiagnosticsDir),
 		booking.WithMetrics(booking.NewMetrics(promMetrics.Registry())))
 
 	bookingScheduler := usecase.NewBookingScheduler(store, booker, opening, config.EncryptionKey, logger)

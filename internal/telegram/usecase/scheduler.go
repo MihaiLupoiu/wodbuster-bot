@@ -120,10 +120,18 @@ func (bs *BookingScheduler) Stop() {
 	bs.logger.Info("booking scheduler stopped")
 }
 
-// processAllBookings is the weekly run: every athlete with pending classes,
-// each in their own goroutine, all of them waiting for the same opening.
-func (bs *BookingScheduler) processAllBookings() {
-	now := time.Now()
+// processAllBookings is the weekly run: every athlete with classes on their
+// schedule, each in their own goroutine, all of them waiting for the same
+// opening.
+//
+// The schedule is the source of truth, not the attempts. Attempts used to be
+// the trigger — a "pending" row per /book — and nothing ever set them back to
+// pending, so every class was booked once and then never again. On 2026-10-18
+// that left two of five athletes out of the run without a word.
+func (bs *BookingScheduler) processAllBookings() { bs.runWeek(time.Now()) }
+
+// runWeek is the weekly run as of now; separate so a test can run two weeks.
+func (bs *BookingScheduler) runWeek(now time.Time) {
 	opensAt := bs.opening.Target(now)
 	bs.logger.Info("booking run starting",
 		"opens_at", opensAt.Format(time.RFC1123),
@@ -134,14 +142,14 @@ func (bs *BookingScheduler) processAllBookings() {
 	bs.metrics.observeRunLateness(opensAt.Add(-bs.opening.StartBefore), now)
 
 	ctx := context.Background()
-	pending, err := bs.storage.GetAllPendingBookings(ctx)
+	users, err := bs.storage.ListUsers(ctx)
 	if err != nil {
-		bs.logger.Error("could not read pending bookings", "error", err)
+		bs.logger.Error("could not read the athletes", "error", err)
 		bs.metrics.observeRunFinished("failed", time.Since(now))
 		return
 	}
-	bs.metrics.observeRunStart(len(pending))
-	byAthlete := groupByChat(pending)
+	byAthlete := bs.weekAttempts(ctx, users, opensAt)
+	bs.metrics.observeRunStart(countAttempts(byAthlete))
 	if len(byAthlete) == 0 {
 		bs.logger.Info("nothing to book")
 		// A run with nothing to do still ran: the alert that matters is "no run
@@ -162,6 +170,56 @@ func (bs *BookingScheduler) processAllBookings() {
 	wg.Wait()
 	bs.metrics.observeRunFinished("completed", time.Since(now))
 	bs.logger.Info("booking run finished", "took", time.Since(now).Round(time.Millisecond))
+}
+
+// weekAttempts turns every authenticated athlete's schedule into this week's
+// attempts, and writes them down before anything is tried.
+//
+// An attempt's id names the athlete, the class and the opening, so it is the
+// same however many times the run starts in one week: a restart inside the
+// window overwrites this week's row instead of adding a second one, and next
+// week gets a fresh row of its own. The rows are history; nothing reads them to
+// decide what to book.
+func (bs *BookingScheduler) weekAttempts(ctx context.Context, users []models.User,
+	opensAt time.Time) map[int64][]models.BookingAttempt {
+
+	week := opensAt.Format("2006-01-02")
+	out := map[int64][]models.BookingAttempt{}
+	for _, u := range users {
+		if !u.IsAuthenticated || len(u.ClassBookingSchedules) == 0 {
+			continue
+		}
+		for _, c := range u.ClassBookingSchedules {
+			now := time.Now()
+			a := models.BookingAttempt{
+				ID:          fmt.Sprintf("%d-%s-%s", u.ChatID, c.ID, week),
+				ChatID:      u.ChatID,
+				Day:         c.Day,
+				Hour:        c.Hour,
+				ClassType:   c.ClassType,
+				Status:      "pending",
+				AttemptTime: opensAt,
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			}
+			if err := bs.storage.SaveBookingAttempt(ctx, a); err != nil {
+				// Not fatal: the booking matters more than its paper trail.
+				bs.logger.Error("could not record this week's attempt",
+					"booking_id", a.ID, "error", err)
+				a.ID = ""
+			}
+			out[u.ChatID] = append(out[u.ChatID], a)
+		}
+	}
+	return out
+}
+
+func countAttempts(byAthlete map[int64][]models.BookingAttempt) int {
+	n := 0
+	for _, as := range byAthlete {
+		n += len(as)
+	}
+	return n
 }
 
 // RunSettings is what distinguishes the Sunday run from a rehearsal.
@@ -356,14 +414,6 @@ func formatOutcome(o booking.Outcome) string {
 		}
 		return "❌ " + o.Class
 	}
-}
-
-func groupByChat(attempts []models.BookingAttempt) map[int64][]models.BookingAttempt {
-	out := map[int64][]models.BookingAttempt{}
-	for _, a := range attempts {
-		out[a.ChatID] = append(out[a.ChatID], a)
-	}
-	return out
 }
 
 func (bs *BookingScheduler) track(chatID int64, first models.BookingAttempt, cancel context.CancelFunc) {

@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"log"
+	"log/slog"
 	"os"
 
 	// Zones baked into the binary: the opening is a wall-clock time in Madrid,
@@ -19,7 +19,10 @@ func main() {
 
 	app, err := app.Initialize(envFile)
 	if err != nil {
-		log.Fatal(err)
+		// Through slog, not log.Fatal: by now the default logger redacts the
+		// bot token, and a failed Telegram handshake quotes it in its error.
+		slog.Error("startup failed", "error", err)
+		os.Exit(1)
 	}
 
 	if err := app.Execute(); err != nil {

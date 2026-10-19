@@ -152,19 +152,19 @@ func (m *MongoStorage) SaveBookingAttempt(ctx context.Context, attempt models.Bo
 	return nil
 }
 
-func (m *MongoStorage) GetAllPendingBookings(ctx context.Context) ([]models.BookingAttempt, error) {
-	cursor, err := m.bookingsCollection.Find(ctx, bson.M{"status": "pending"})
+func (m *MongoStorage) ListUsers(ctx context.Context) ([]models.User, error) {
+	cursor, err := m.usersCollection.Find(ctx, bson.M{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get pending bookings: %w", err)
+		return nil, fmt.Errorf("failed to list users: %w", err)
 	}
 	defer cursor.Close(ctx)
 
-	var bookings []models.BookingAttempt
-	if err := cursor.All(ctx, &bookings); err != nil {
-		return nil, fmt.Errorf("failed to decode booking attempts: %w", err)
+	var users []models.User
+	if err := cursor.All(ctx, &users); err != nil {
+		return nil, fmt.Errorf("failed to decode users: %w", err)
 	}
 
-	return bookings, nil
+	return users, nil
 }
 
 func (m *MongoStorage) UpdateBookingStatus(ctx context.Context, attemptID string, status string, errorMsg string) error {

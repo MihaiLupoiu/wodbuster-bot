@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/platform/logging"
 	"github.com/joho/godotenv"
 	"github.com/kelseyhightower/envconfig"
 )
@@ -29,6 +30,11 @@ type Config struct {
 	// container sets it explicitly.
 	ChromePath string `envconfig:"WODBUSTER_CHROME_PATH"`
 
+	// DiagnosticsDir is where a failed login leaves an HTML dump (passwords
+	// stripped) and a screenshot. Empty turns it off. In a container, mount a
+	// volume here to keep the files past a restart.
+	DiagnosticsDir string `envconfig:"WODBUSTER_DIAGNOSTICS_DIR" default:"/tmp/wodbuster-diagnostics"`
+
 	// MongoDB configuration
 	MongoURI    string `envconfig:"MONGO_URI" default:"mongodb://localhost:27017"`
 	MongoDB     string `envconfig:"MONGO_DB" default:"wodbuster"`
@@ -51,12 +57,19 @@ func NewConfig(envFile string) (*Config, error) {
 		log.Fatalf("app start failed while parsing env: %v", err)
 	}
 
-	cfg.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: cfg.LoggerLevel,
-	}))
+	cfg.Logger = cfg.NewLogger()
 	slog.SetDefault(cfg.Logger)
 
 	return cfg, nil
+}
+
+// NewLogger is the JSON logger at the configured level, with the bot token and
+// the database password redacted from everything it writes. slog.SetDefault
+// on it also routes the standard log package through the same redaction.
+func (c *Config) NewLogger() *slog.Logger {
+	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: c.LoggerLevel})
+	redactor := logging.NewRedactor(c.TelegramToken, logging.URIPassword(c.MongoURI))
+	return slog.New(logging.NewHandler(jsonHandler, redactor))
 }
 
 // LoadDotEnv read .env file and load vars into env

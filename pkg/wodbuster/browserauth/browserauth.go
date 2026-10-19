@@ -17,6 +17,7 @@ package browserauth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -171,6 +172,11 @@ const jsClickByText = `(function(texts){
   }
   return '';
 })(%s)`
+
+// ErrRejected is WodBuster saying no to the email and password. Anything else
+// that fails a login — a slow page, a prompt that did not take — may work on a
+// second try; this will not, and retrying it only risks locking the account.
+var ErrRejected = errors.New("browserauth: WodBuster rejected the credentials")
 
 // Credentials are an athlete's WodBuster login.
 //
@@ -360,7 +366,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 			break
 		}
 		if looksRejected(body) {
-			return zero, fmt.Errorf("browserauth: WodBuster rejected the credentials")
+			return zero, ErrRejected
 		}
 		if strings.Contains(body, "recordar este dispositivo") {
 			var via string
@@ -517,7 +523,7 @@ func (a *Authenticator) dump(ctx context.Context, name string) {
 		a.log.Warn("could not create the diagnostics directory", "err", err)
 		return
 	}
-	stamp := time.Now().Format("20060102-150405")
+	stamp := time.Now().Format("20060102-150405.000")
 	base := fmt.Sprintf("%s/%s-%s", strings.TrimRight(a.diagnosticsDir, "/"), name, stamp)
 
 	var html string

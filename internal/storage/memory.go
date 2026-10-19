@@ -89,18 +89,15 @@ func (m *MemoryStorage) SaveBookingAttempt(ctx context.Context, attempt models.B
 	return nil
 }
 
-func (m *MemoryStorage) GetAllPendingBookings(ctx context.Context) ([]models.BookingAttempt, error) {
+func (m *MemoryStorage) ListUsers(ctx context.Context) ([]models.User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var pending []models.BookingAttempt
-	for _, booking := range m.bookings {
-		if booking.Status == "pending" {
-			pending = append(pending, booking)
-		}
+	users := make([]models.User, 0, len(m.users))
+	for _, u := range m.users {
+		users = append(users, u)
 	}
-
-	return pending, nil
+	return users, nil
 }
 
 func (m *MemoryStorage) UpdateBookingStatus(ctx context.Context, attemptID string, status string, errorMsg string) error {

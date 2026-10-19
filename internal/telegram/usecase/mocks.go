@@ -39,68 +39,6 @@ func (_m *MockStorage) EXPECT() *MockStorage_Expecter {
 	return &MockStorage_Expecter{mock: &_m.Mock}
 }
 
-// GetAllPendingBookings provides a mock function for the type MockStorage
-func (_mock *MockStorage) GetAllPendingBookings(ctx context.Context) ([]models.BookingAttempt, error) {
-	ret := _mock.Called(ctx)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetAllPendingBookings")
-	}
-
-	var r0 []models.BookingAttempt
-	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context) ([]models.BookingAttempt, error)); ok {
-		return returnFunc(ctx)
-	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context) []models.BookingAttempt); ok {
-		r0 = returnFunc(ctx)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.BookingAttempt)
-		}
-	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context) error); ok {
-		r1 = returnFunc(ctx)
-	} else {
-		r1 = ret.Error(1)
-	}
-	return r0, r1
-}
-
-// MockStorage_GetAllPendingBookings_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetAllPendingBookings'
-type MockStorage_GetAllPendingBookings_Call struct {
-	*mock.Call
-}
-
-// GetAllPendingBookings is a helper method to define mock.On call
-//   - ctx context.Context
-func (_e *MockStorage_Expecter) GetAllPendingBookings(ctx interface{}) *MockStorage_GetAllPendingBookings_Call {
-	return &MockStorage_GetAllPendingBookings_Call{Call: _e.mock.On("GetAllPendingBookings", ctx)}
-}
-
-func (_c *MockStorage_GetAllPendingBookings_Call) Run(run func(ctx context.Context)) *MockStorage_GetAllPendingBookings_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
-		if args[0] != nil {
-			arg0 = args[0].(context.Context)
-		}
-		run(
-			arg0,
-		)
-	})
-	return _c
-}
-
-func (_c *MockStorage_GetAllPendingBookings_Call) Return(bookingAttempts []models.BookingAttempt, err error) *MockStorage_GetAllPendingBookings_Call {
-	_c.Call.Return(bookingAttempts, err)
-	return _c
-}
-
-func (_c *MockStorage_GetAllPendingBookings_Call) RunAndReturn(run func(ctx context.Context) ([]models.BookingAttempt, error)) *MockStorage_GetAllPendingBookings_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // GetClassBookingSchedules provides a mock function for the type MockStorage
 func (_mock *MockStorage) GetClassBookingSchedules(ctx context.Context, chatID int64) ([]models.ClassBookingSchedule, bool) {
 	ret := _mock.Called(ctx, chatID)
@@ -231,6 +169,68 @@ func (_c *MockStorage_GetUser_Call) Return(user models.User, b bool) *MockStorag
 }
 
 func (_c *MockStorage_GetUser_Call) RunAndReturn(run func(ctx context.Context, chatID int64) (models.User, bool)) *MockStorage_GetUser_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ListUsers provides a mock function for the type MockStorage
+func (_mock *MockStorage) ListUsers(ctx context.Context) ([]models.User, error) {
+	ret := _mock.Called(ctx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListUsers")
+	}
+
+	var r0 []models.User
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context) ([]models.User, error)); ok {
+		return returnFunc(ctx)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context) []models.User); ok {
+		r0 = returnFunc(ctx)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.User)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = returnFunc(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockStorage_ListUsers_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListUsers'
+type MockStorage_ListUsers_Call struct {
+	*mock.Call
+}
+
+// ListUsers is a helper method to define mock.On call
+//   - ctx context.Context
+func (_e *MockStorage_Expecter) ListUsers(ctx interface{}) *MockStorage_ListUsers_Call {
+	return &MockStorage_ListUsers_Call{Call: _e.mock.On("ListUsers", ctx)}
+}
+
+func (_c *MockStorage_ListUsers_Call) Run(run func(ctx context.Context)) *MockStorage_ListUsers_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStorage_ListUsers_Call) Return(users []models.User, err error) *MockStorage_ListUsers_Call {
+	_c.Call.Return(users, err)
+	return _c
+}
+
+func (_c *MockStorage_ListUsers_Call) RunAndReturn(run func(ctx context.Context) ([]models.User, error)) *MockStorage_ListUsers_Call {
 	_c.Call.Return(run)
 	return _c
 }
