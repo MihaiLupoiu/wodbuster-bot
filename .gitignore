@@ -2,3 +2,5 @@
 .env
 /build/*
 config.json
+# Local working notes (not shared)
+/notes/
