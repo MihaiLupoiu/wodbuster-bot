@@ -36,6 +36,11 @@ RUN test -x "$WODBUSTER_CHROME_PATH"
 
 # Chrome is launched with --no-sandbox, so do not also hand it root.
 RUN adduser -D -u 10001 bot
+
+# Where a failed login leaves its HTML dump and screenshot. Created here, owned
+# by the bot, because a named volume mounted on it copies this ownership; left
+# to Docker the mount point is root's and the bot cannot write to it.
+RUN mkdir -p /tmp/wodbuster-diagnostics && chown bot:bot /tmp/wodbuster-diagnostics
 USER bot
 
 ARG VERSION=dev
