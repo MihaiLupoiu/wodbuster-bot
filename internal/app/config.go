@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/platform/logging"
 	"github.com/joho/godotenv"
@@ -34,6 +35,10 @@ type Config struct {
 	// stripped) and a screenshot. Empty turns it off. In a container, mount a
 	// volume here to keep the files past a restart.
 	DiagnosticsDir string `envconfig:"WODBUSTER_DIAGNOSTICS_DIR" default:"/tmp/wodbuster-diagnostics"`
+
+	// LoginGap spaces out the athletes' logins: one at a time, each starting
+	// this long after the previous one finished. Zero lets them run together.
+	LoginGap time.Duration `envconfig:"WODBUSTER_LOGIN_GAP" default:"20s"`
 
 	// MongoDB configuration
 	MongoURI    string `envconfig:"MONGO_URI" default:"mongodb://localhost:27017"`

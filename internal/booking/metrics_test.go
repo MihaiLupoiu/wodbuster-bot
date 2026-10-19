@@ -3,6 +3,7 @@ package booking
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +13,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster/browserauth"
 )
 
 // The path carries a class id and a ticks value, so the raw path would be a new
@@ -44,6 +47,36 @@ func TestLoginResult(t *testing.T) {
 			assert.Equal(t, tc.want, loginResult(tc.err))
 		})
 	}
+}
+
+// A failed login is counted by where it stopped, so a Cloudflare challenge
+// and WodBuster's own pages misbehaving are told apart on a dashboard.
+func TestLoginFailureReason(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want string
+	}{
+		"cloudflare":     {&browserauth.StuckError{Reason: browserauth.StuckCloudflare}, "cloudflare"},
+		"roadtobox":      {&browserauth.StuckError{Reason: browserauth.StuckRoadToBox}, "roadtobox"},
+		"wrapped stuck":  {fmt.Errorf("login failed: %w", &browserauth.StuckError{Reason: browserauth.StuckLoginPage}), "login_page"},
+		"rejected":       {fmt.Errorf("login failed: %w", browserauth.ErrRejected), "rejected"},
+		"run cancelled":  {context.DeadlineExceeded, "timeout"},
+		"browser broken": {errors.New("exec: \"chromium\": executable file not found"), "error"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, loginFailureReason(tc.err))
+		})
+	}
+}
+
+func TestObserveLoginCountsFailuresByReason(t *testing.T) {
+	m := NewMetrics(prom.NewRegistry())
+	m.observeLogin(nil, time.Second)
+	m.observeLogin(&browserauth.StuckError{Reason: browserauth.StuckCloudflare}, 45*time.Second)
+
+	assert.Equal(t, 1.0, testutil.ToFloat64(m.loginTotal.WithLabelValues("ok")))
+	assert.Equal(t, 1.0, testutil.ToFloat64(m.loginTotal.WithLabelValues("timeout")))
+	assert.Equal(t, 1.0, testutil.ToFloat64(m.loginFailures.WithLabelValues("cloudflare")))
 }
 
 // The transport counts what the client actually sends, without pkg/wodbuster
@@ -93,7 +126,7 @@ func TestTransportCountsFailures(t *testing.T) {
 func TestNilMetricsAreInert(t *testing.T) {
 	var m *Metrics
 	assert.NotPanics(t, func() {
-		m.observeLogin("ok", time.Second)
+		m.observeLogin(nil, time.Second)
 		m.observeDrift("device", "label")
 		m.observeClockOffset(time.Second)
 		m.observeBookingLatency(time.Second)

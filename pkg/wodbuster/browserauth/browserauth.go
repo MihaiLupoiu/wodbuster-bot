@@ -178,6 +178,58 @@ const jsClickByText = `(function(texts){
 // second try; this will not, and retrying it only risks locking the account.
 var ErrRejected = errors.New("browserauth: WodBuster rejected the credentials")
 
+// Where a login can be when it runs out of time. They are the values of
+// StuckError.Reason, and bounded on purpose: the bot counts them in a metric.
+const (
+	StuckCloudflare   = "cloudflare"    // a Cloudflare challenge is on the page
+	StuckDevicePrompt = "device_prompt" // "remember this device" never went away
+	StuckRoadToBox    = "roadtobox"     // stopped on WodBuster's box hand-off page
+	StuckLoginPage    = "login_page"    // back on, or never left, the login form
+	StuckOther        = "other"
+)
+
+// StuckError is a login that ran out of time, with what the page showed when
+// it did. "Did not finish in time" alone told us nothing on 2026-10-18; where
+// it stopped is what tells a Cloudflare challenge apart from WodBuster's own
+// pages misbehaving.
+type StuckError struct {
+	Reason  string   // one of the Stuck* constants
+	URL     string   // where the browser was
+	Title   string   // the page's <title>
+	Cookies []string // cookie names in the jar; cf_clearance or __cf_bm mean Cloudflare stepped in
+}
+
+func (e *StuckError) Error() string {
+	return fmt.Sprintf("browserauth: login did not finish in time (stuck: %s, at %s, title %q)",
+		e.Reason, e.URL, e.Title)
+}
+
+// jsPageState reads what the login loop needs from the page in one round trip.
+// cf is true when the page carries any of Cloudflare's challenge markers: the
+// Turnstile widget or its iframe, the challenge-platform script, or the
+// interstitial's wording.
+const jsPageState = `(function(){
+  var body = (document.body ? document.body.innerText : '').slice(0,4000).toLowerCase();
+  var title = document.title || '';
+  var cf = !!document.querySelector(
+      'iframe[src*="challenges.cloudflare.com"], .cf-turnstile, [name="cf-turnstile-response"], ' +
+      'script[src*="/cdn-cgi/challenge-platform"], #challenge-form, #cf-challenge-running') ||
+    /just a moment|verify you are human|checking your browser|verifica que eres humano/i
+      .test(title + ' ' + body.slice(0,500));
+  return {body: body, title: title, cf: cf};
+})()`
+
+type pageState struct {
+	Body  string `json:"body"`
+	Title string `json:"title"`
+	CF    bool   `json:"cf"`
+}
+
+// roadToBoxGrace is how long the login waits on roadtobox.aspx for WodBuster to
+// move on by itself before going to the box directly. A good login passes
+// through it in well under a second; on 2026-10-14 one sat there for 45s.
+const roadToBoxGrace = 3 * time.Second
+
 // Credentials are an athlete's WodBuster login.
 //
 // They are used once, to mint a Session, and are not retained. Callers should
@@ -348,25 +400,58 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 
 	deadline := time.Now().Add(a.timeout / 2)
 	dumpedPrompt := false
+	sawChallenge := false
+	var onRoadToBoxSince time.Time
+	var href string
+	var page pageState
 	for {
 		if time.Now().After(deadline) {
 			a.dump(runCtx, "login-stuck")
-			return zero, fmt.Errorf("browserauth: login did not finish in time (wrong credentials?)")
+			stuck := &StuckError{
+				Reason:  stuckReason(href, page),
+				URL:     href,
+				Title:   page.Title,
+				Cookies: cookieNames(runCtx),
+			}
+			a.log.Warn("login stuck", "reason", stuck.Reason, "url", stuck.URL,
+				"title", stuck.Title, "cookies", stuck.Cookies,
+				"cloudflare_seen", sawChallenge || page.CF)
+			return zero, stuck
 		}
 
-		var href, body string
 		if err := chromedp.Run(runCtx,
 			chromedp.Location(&href),
-			chromedp.Evaluate(`(document.body ? document.body.innerText : '').slice(0,4000).toLowerCase()`, &body),
+			chromedp.Evaluate(jsPageState, &page),
 		); err != nil {
 			return zero, fmt.Errorf("browserauth: lost the page during login: %w", err)
 		}
+		body := page.Body
 
 		if strings.Contains(href, box+".wodbuster.com") {
 			break
 		}
+		if page.CF && !sawChallenge {
+			// Logged as it happens, not only at the timeout: a challenge that
+			// clears by itself still says Cloudflare is watching.
+			sawChallenge = true
+			a.log.Warn("Cloudflare challenge on the login", "url", href, "title", page.Title)
+			a.dump(runCtx, "cloudflare")
+		}
 		if looksRejected(body) {
 			return zero, ErrRejected
+		}
+		if strings.Contains(href, "/account/roadtobox.aspx") {
+			// WodBuster's hand-off from the shared login to the box. It usually
+			// forwards by itself; when it does not, the session is already
+			// made, so go to the box ourselves — the booking page below proves
+			// it, or fails loudly with a dump.
+			if onRoadToBoxSince.IsZero() {
+				onRoadToBoxSince = time.Now()
+			} else if time.Since(onRoadToBoxSince) >= roadToBoxGrace {
+				a.log.Warn("login stopped on roadtobox.aspx; going to the box directly",
+					"waited", time.Since(onRoadToBoxSince).Round(time.Millisecond), "title", page.Title)
+				break
+			}
 		}
 		if strings.Contains(body, "recordar este dispositivo") {
 			var via string
@@ -493,6 +578,41 @@ func toHTTPCookies(jar []*network.Cookie, box string) []*http.Cookie {
 		})
 	}
 	return out
+}
+
+// stuckReason names where a login that ran out of time had stopped. A
+// challenge wins over everything else: it is the one that explains the rest.
+func stuckReason(href string, p pageState) string {
+	switch {
+	case p.CF:
+		return StuckCloudflare
+	case strings.Contains(p.Body, "recordar este dispositivo"):
+		return StuckDevicePrompt
+	case strings.Contains(href, "/account/roadtobox.aspx"):
+		return StuckRoadToBox
+	case strings.Contains(href, "/account/login.aspx"):
+		return StuckLoginPage
+	default:
+		return StuckOther
+	}
+}
+
+// cookieNames lists the names, never the values, of every cookie in the
+// browser. Best effort: it is only for the log line of a failed login.
+func cookieNames(ctx context.Context) []string {
+	var jar []*network.Cookie
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		var err error
+		jar, err = storage.GetCookies().Do(ctx)
+		return err
+	})); err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(jar))
+	for _, c := range jar {
+		names = append(names, c.Name)
+	}
+	return names
 }
 
 func looksRejected(body string) bool {

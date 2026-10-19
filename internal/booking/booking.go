@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
@@ -51,6 +52,7 @@ type Service struct {
 	diagnosticsDir string
 	loginAttempts  int
 	loginBackoff   time.Duration
+	gate           *loginGate
 	log            *slog.Logger
 	metrics        *Metrics
 
@@ -92,6 +94,17 @@ func WithLoginAttempts(n int, backoff time.Duration) Option {
 	}
 }
 
+// WithLoginGap makes logins happen one at a time, each starting at least gap
+// after the previous one finished. Zero lets them run side by side.
+//
+// Every athlete's run starts at 11:50 on the dot, so without it every browser
+// hits the login at the same second, which is the pattern most likely to
+// draw a Cloudflare challenge. Five athletes at a few seconds each plus 20s
+// gaps is under two minutes of the ten the run has before the opening.
+func WithLoginGap(gap time.Duration) Option {
+	return func(s *Service) { s.gate = newLoginGate(gap) }
+}
+
 // Three tries fit comfortably in the ten minutes a run starts ahead of the
 // opening: a stuck login gives up after about 45s.
 const (
@@ -101,7 +114,8 @@ const (
 
 func New(box string, loc *time.Location, log *slog.Logger, opts ...Option) *Service {
 	s := &Service{box: box, loc: loc, headless: true, log: log,
-		loginAttempts: defaultLoginAttempts, loginBackoff: defaultLoginBackoff}
+		loginAttempts: defaultLoginAttempts, loginBackoff: defaultLoginBackoff,
+		gate: newLoginGate(0)}
 	s.login = s.authenticate
 	for _, o := range opts {
 		o(s)
@@ -118,6 +132,15 @@ func (s *Service) Authenticate(ctx context.Context, email, password string) erro
 }
 
 func (s *Service) authenticate(ctx context.Context, email, password string) (wodbuster.Session, error) {
+	waited, err := s.gate.acquire(ctx)
+	if err != nil {
+		return wodbuster.Session{}, fmt.Errorf("waiting for a login slot: %w", err)
+	}
+	defer s.gate.release()
+	if waited > time.Second {
+		s.log.Info("login slot acquired", "athlete", email, "waited", waited.Round(time.Second))
+	}
+
 	opts := []browserauth.Option{
 		browserauth.WithHeadless(s.headless),
 		browserauth.WithLogger(s.log),
@@ -133,8 +156,51 @@ func (s *Service) authenticate(ctx context.Context, email, password string) (wod
 	started := time.Now()
 	sess, err := browserauth.New(opts...).
 		Authenticate(ctx, s.box, browserauth.Credentials{Email: email, Password: password})
-	s.metrics.observeLogin(loginResult(err), time.Since(started))
+	s.metrics.observeLogin(err, time.Since(started))
 	return sess, err
+}
+
+// loginGate lets one login through at a time, and not until gap has passed
+// since the last one finished.
+type loginGate struct {
+	slot chan struct{}
+	gap  time.Duration
+
+	mu   sync.Mutex
+	last time.Time // when the previous login finished
+}
+
+func newLoginGate(gap time.Duration) *loginGate {
+	return &loginGate{slot: make(chan struct{}, 1), gap: gap}
+}
+
+// acquire blocks until it is this caller's turn, and says how long that took.
+func (g *loginGate) acquire(ctx context.Context) (time.Duration, error) {
+	started := time.Now()
+	select {
+	case g.slot <- struct{}{}:
+	case <-ctx.Done():
+		return time.Since(started), ctx.Err()
+	}
+	g.mu.Lock()
+	wait := time.Until(g.last.Add(g.gap))
+	g.mu.Unlock()
+	if wait > 0 {
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			<-g.slot
+			return time.Since(started), ctx.Err()
+		}
+	}
+	return time.Since(started), nil
+}
+
+func (g *loginGate) release() {
+	g.mu.Lock()
+	g.last = time.Now()
+	g.mu.Unlock()
+	<-g.slot
 }
 
 // RunOptions says when to act and whether to touch anything.
