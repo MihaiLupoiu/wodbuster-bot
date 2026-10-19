@@ -9,6 +9,7 @@ import (
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/platform/logging"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/handlers"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/telegram/usecase"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/utils"
@@ -48,6 +49,11 @@ func (b *Bot) WithMetrics(m *Metrics) *Bot {
 }
 
 func New(token string, manager BotManager, logger *slog.Logger) (*Bot, error) {
+	// The library logs on its own — a dropped long poll, with the request URL,
+	// which carries the token. Through our logger those lines are JSON and get
+	// the same redaction as everything else, instead of going raw to stderr.
+	_ = tgbotapi.SetLogger(logging.PrintLogger{Log: logger, Level: slog.LevelWarn, Msg: "telegram api"})
+
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		switch err.Error() {

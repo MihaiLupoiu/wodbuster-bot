@@ -48,9 +48,7 @@ func New(config *Config) (*App, error) {
 	// logging never appeared.
 	logger := config.Logger
 	if logger == nil {
-		logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: config.LoggerLevel,
-		}))
+		logger = config.NewLogger()
 	}
 	logger.Info("log level", "level", config.LoggerLevel.String())
 
