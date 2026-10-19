@@ -44,12 +44,20 @@ func (o Outcome) OK() bool { return o.Err == nil && o.Status != "failed" }
 
 // Service books for any athlete of one box.
 type Service struct {
-	box        string
-	loc        *time.Location
-	headless   bool
-	chromePath string
-	log        *slog.Logger
-	metrics    *Metrics
+	box            string
+	loc            *time.Location
+	headless       bool
+	chromePath     string
+	diagnosticsDir string
+	loginAttempts  int
+	loginBackoff   time.Duration
+	log            *slog.Logger
+	metrics        *Metrics
+
+	// login is how a run gets a session. It is s.authenticate outside tests;
+	// tests swap it so that a run can be driven against wodbustertest without
+	// a browser.
+	login func(ctx context.Context, email, password string) (wodbuster.Session, error)
 }
 
 type Option func(*Service)
@@ -66,8 +74,35 @@ func WithChromePath(p string) Option { return func(s *Service) { s.chromePath = 
 // booking.WithMetrics(booking.NewMetrics(prom.Registry())).
 func WithMetrics(m *Metrics) Option { return func(s *Service) { s.metrics = m } }
 
+// WithDiagnosticsDir makes a failed login leave an HTML dump (passwords
+// stripped) and a screenshot there. Empty turns it off. It is the only record
+// of what WodBuster showed when a login got stuck.
+func WithDiagnosticsDir(d string) Option { return func(s *Service) { s.diagnosticsDir = d } }
+
+// WithLoginAttempts sets how many times a run tries to log in before giving
+// up, and how long it waits between tries. Values below one keep the default.
+func WithLoginAttempts(n int, backoff time.Duration) Option {
+	return func(s *Service) {
+		if n > 0 {
+			s.loginAttempts = n
+		}
+		if backoff > 0 {
+			s.loginBackoff = backoff
+		}
+	}
+}
+
+// Three tries fit comfortably in the ten minutes a run starts ahead of the
+// opening: a stuck login gives up after about 45s.
+const (
+	defaultLoginAttempts = 3
+	defaultLoginBackoff  = 5 * time.Second
+)
+
 func New(box string, loc *time.Location, log *slog.Logger, opts ...Option) *Service {
-	s := &Service{box: box, loc: loc, headless: true, log: log}
+	s := &Service{box: box, loc: loc, headless: true, log: log,
+		loginAttempts: defaultLoginAttempts, loginBackoff: defaultLoginBackoff}
+	s.login = s.authenticate
 	for _, o := range opts {
 		o(s)
 	}
@@ -87,6 +122,9 @@ func (s *Service) authenticate(ctx context.Context, email, password string) (wod
 		browserauth.WithHeadless(s.headless),
 		browserauth.WithLogger(s.log),
 		browserauth.WithDriftObserver(s.metrics.observeDrift),
+	}
+	if s.diagnosticsDir != "" {
+		opts = append(opts, browserauth.WithDiagnosticsDir(s.diagnosticsDir))
 	}
 	if s.chromePath != "" {
 		opts = append(opts, browserauth.WithChromePath(s.chromePath))
@@ -150,7 +188,7 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 		"opens_at", o.OpensAt.Format(time.RFC1123))
 
 	started := time.Now()
-	sess, err := s.authenticate(ctx, email, password)
+	sess, err := s.loginWithRetry(ctx, log, email, password)
 	if err != nil {
 		return nil, fmt.Errorf("login failed: %w", err)
 	}
@@ -234,6 +272,35 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 		})
 	}
 	return out, nil
+}
+
+// loginWithRetry logs in, trying again when the failure might be WodBuster's
+// rather than the athlete's. On 2026-10-18 one athlete's login sat on the login
+// page after the device prompt until it timed out; the same login had failed
+// that way once before and worked on the next try a minute later. The run
+// starts ten minutes early precisely so there is time for that.
+func (s *Service) loginWithRetry(ctx context.Context, log *slog.Logger,
+	email, password string) (wodbuster.Session, error) {
+
+	var err error
+	for attempt := 1; attempt <= s.loginAttempts; attempt++ {
+		var sess wodbuster.Session
+		sess, err = s.login(ctx, email, password)
+		if err == nil {
+			return sess, nil
+		}
+		if errors.Is(err, browserauth.ErrRejected) || attempt == s.loginAttempts {
+			break
+		}
+		log.Warn("login failed; trying again", "attempt", attempt,
+			"of", s.loginAttempts, "in", s.loginBackoff, "err", err)
+		select {
+		case <-ctx.Done():
+			return wodbuster.Session{}, errors.Join(err, ctx.Err())
+		case <-time.After(s.loginBackoff):
+		}
+	}
+	return wodbuster.Session{}, err
 }
 
 // observeResult records what one chased goal did. Latency is measured from the

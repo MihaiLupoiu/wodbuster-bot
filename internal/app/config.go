@@ -29,6 +29,11 @@ type Config struct {
 	// container sets it explicitly.
 	ChromePath string `envconfig:"WODBUSTER_CHROME_PATH"`
 
+	// DiagnosticsDir is where a failed login leaves an HTML dump (passwords
+	// stripped) and a screenshot. Empty turns it off. In a container, mount a
+	// volume here to keep the files past a restart.
+	DiagnosticsDir string `envconfig:"WODBUSTER_DIAGNOSTICS_DIR" default:"/tmp/wodbuster-diagnostics"`
+
 	// MongoDB configuration
 	MongoURI    string `envconfig:"MONGO_URI" default:"mongodb://localhost:27017"`
 	MongoDB     string `envconfig:"MONGO_DB" default:"wodbuster"`

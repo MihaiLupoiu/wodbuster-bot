@@ -85,6 +85,7 @@ func New(config *Config) (*App, error) {
 
 	booker := booking.New(config.Box, loc, logger,
 		booking.WithChromePath(config.ChromePath),
+		booking.WithDiagnosticsDir(config.DiagnosticsDir),
 		booking.WithMetrics(booking.NewMetrics(promMetrics.Registry())))
 
 	bookingScheduler := usecase.NewBookingScheduler(store, booker, opening, config.EncryptionKey, logger)
