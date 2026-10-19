@@ -166,4 +166,29 @@ func TestMongoStorage(t *testing.T) {
 		assert.False(t, exists)
 		assert.Nil(t, schedules)
 	})
+
+	t.Run("ListUsers", func(t *testing.T) {
+		// Given
+		storage, err := NewMongoStorage(uri, dbName)
+		require.NoError(t, err)
+		defer storage.Close()
+
+		class := models.ClassBookingSchedule{ID: "Monday-07:00-Wod", Day: "Monday", Hour: "07:00", ClassType: "Wod"}
+		require.NoError(t, storage.SaveUser(ctx, models.User{ChatID: 501, Email: "a@example.com", IsAuthenticated: true,
+			ClassBookingSchedules: []models.ClassBookingSchedule{class}}))
+		require.NoError(t, storage.SaveUser(ctx, models.User{ChatID: 502, Email: "b@example.com"}))
+
+		// When
+		users, err := storage.ListUsers(ctx)
+
+		// Then
+		require.NoError(t, err)
+		byChat := map[int64]models.User{}
+		for _, u := range users {
+			byChat[u.ChatID] = u
+		}
+		require.Contains(t, byChat, int64(501))
+		require.Contains(t, byChat, int64(502))
+		assert.Equal(t, []models.ClassBookingSchedule{class}, byChat[501].ClassBookingSchedules)
+	})
 }
