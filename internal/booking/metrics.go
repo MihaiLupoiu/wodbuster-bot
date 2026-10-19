@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/platform/metrics"
+	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster/browserauth"
 )
 
 // Buckets chosen from what the real runs do, not from habit.
@@ -43,6 +44,7 @@ var knownEndpoints = map[string]bool{
 // the requests that follow, and how the chase ends.
 type Metrics struct {
 	loginTotal      *prom.CounterVec
+	loginFailures   *prom.CounterVec
 	loginDuration   prom.Histogram
 	controlDrift    *prom.CounterVec
 	apiRequests     *prom.CounterVec
@@ -62,6 +64,12 @@ func NewMetrics(reg prom.Registerer) *Metrics {
 			Namespace: ns, Name: "login_total",
 			Help: "Logins attempted, by result.",
 		}, []string{"result"}),
+
+		loginFailures: f.NewCounterVec(prom.CounterOpts{
+			Namespace: ns, Name: "login_failures_total",
+			Help: "Failed logins, by where they failed: rejected, cloudflare, " +
+				"device_prompt, roadtobox, login_page, other, timeout or error.",
+		}, []string{"reason"}),
 
 		loginDuration: f.NewHistogram(prom.HistogramOpts{
 			Namespace: ns, Name: "login_duration_seconds",
@@ -114,12 +122,15 @@ func NewMetrics(reg prom.Registerer) *Metrics {
 	}
 }
 
-func (m *Metrics) observeLogin(result string, d time.Duration) {
+func (m *Metrics) observeLogin(err error, d time.Duration) {
 	if m == nil {
 		return
 	}
-	m.loginTotal.WithLabelValues(result).Inc()
+	m.loginTotal.WithLabelValues(loginResult(err)).Inc()
 	m.loginDuration.Observe(d.Seconds())
+	if err != nil {
+		m.loginFailures.WithLabelValues(loginFailureReason(err)).Inc()
+	}
 }
 
 func (m *Metrics) observeDrift(control, via string) {
@@ -170,6 +181,21 @@ func loginResult(err error) string {
 		return "timeout"
 	default:
 		return "error"
+	}
+}
+
+// loginFailureReason says where a failed login failed. A stuck login carries
+// its own answer; the rest fall back to the coarse result. The label set is
+// closed: browserauth's Stuck* constants plus loginResult's values.
+func loginFailureReason(err error) string {
+	var stuck *browserauth.StuckError
+	switch {
+	case errors.As(err, &stuck):
+		return stuck.Reason
+	case errors.Is(err, browserauth.ErrRejected):
+		return "rejected"
+	default:
+		return loginResult(err)
 	}
 }
 

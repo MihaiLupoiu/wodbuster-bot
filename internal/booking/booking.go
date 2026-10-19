@@ -133,7 +133,7 @@ func (s *Service) authenticate(ctx context.Context, email, password string) (wod
 	started := time.Now()
 	sess, err := browserauth.New(opts...).
 		Authenticate(ctx, s.box, browserauth.Credentials{Email: email, Password: password})
-	s.metrics.observeLogin(loginResult(err), time.Since(started))
+	s.metrics.observeLogin(err, time.Since(started))
 	return sess, err
 }
 
