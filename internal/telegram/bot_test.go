@@ -2,6 +2,18 @@ package telegram
 
 import "testing"
 
+// Run results go out as plain text. In Markdown, the underscore in a stuck
+// login's "device_prompt" made Telegram refuse the message that reported it.
+func TestNotificationsAreNotParsedAsMarkdown(t *testing.T) {
+	msg := notification(7, "❌ Booking run failed: login failed: stuck: device_prompt")
+	if msg.ParseMode != "" {
+		t.Errorf("ParseMode = %q, want plain text", msg.ParseMode)
+	}
+	if msg.ChatID != 7 {
+		t.Errorf("ChatID = %d, want 7", msg.ChatID)
+	}
+}
+
 // The bot logs every command it receives. /login carries a password, and a
 // password in the container logs is the one mistake this bot cannot make.
 func TestRedactArgsKeepsPasswordsOutOfTheLogs(t *testing.T) {

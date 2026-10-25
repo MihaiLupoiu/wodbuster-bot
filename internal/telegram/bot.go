@@ -280,7 +280,15 @@ func (b *Bot) handleActiveBookings(update tgbotapi.Update) {
 // Notify delivers a booking result to an athlete. It is how the Sunday run
 // reports back: nobody is watching the logs at noon.
 func (b *Bot) Notify(chatID int64, text string) {
-	b.sendMessage(chatID, text)
+	b.send(notification(chatID, text), text)
+}
+
+// notification is sent as plain text, not Markdown. Results carry error text
+// and class names nobody escaped: a stuck login's reason is "device_prompt" or
+// "login_page", and one unpaired underscore makes Telegram reject the whole
+// message, so the athlete hears nothing about the failure it was reporting.
+func notification(chatID int64, text string) tgbotapi.MessageConfig {
+	return tgbotapi.NewMessage(chatID, text)
 }
 
 // handleRehearse runs the athlete's classes right now against the published
@@ -334,15 +342,18 @@ func (b *Bot) handleSchedule(update tgbotapi.Update) {
 func (b *Bot) sendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
+	b.send(msg, text)
+}
 
+func (b *Bot) send(msg tgbotapi.MessageConfig, text string) {
 	_, err := b.api.Send(msg)
 	b.metrics.ObserveMessageSent(err)
 	if err != nil {
-		b.logger.Error("could not send message", "error", err, "chat_id", chatID,
+		b.logger.Error("could not send message", "error", err, "chat_id", msg.ChatID,
 			"text", firstLine(text))
 		return
 	}
-	b.logger.Debug("message sent", "chat_id", chatID, "chars", len(text), "text", firstLine(text))
+	b.logger.Debug("message sent", "chat_id", msg.ChatID, "chars", len(text), "text", firstLine(text))
 }
 
 // redactArgs keeps credentials out of the logs. /login carries an email and a

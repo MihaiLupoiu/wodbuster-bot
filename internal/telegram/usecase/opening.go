@@ -71,10 +71,15 @@ func (o Opening) Target(now time.Time) time.Time {
 	return next
 }
 
-// InWindow says whether a run starting now would be chasing the week that is
-// already open. Used on startup, when a container may have missed its cron.
+// InWindow says whether the cron for the coming or current opening has already
+// fired: from StartBefore ahead of the opening until Grace after it. Used on
+// startup, when a container may have missed its cron.
+//
+// It starts at the cron's time, not at the opening. A restart at 11:55 used to
+// fall in neither half: too late for the 11:50 cron, too early to count as a
+// missed opening, so the week was skipped.
 func (o Opening) InWindow(now time.Time) bool {
-	return o.Target(now).Before(now)
+	return !now.Before(o.Target(now).Add(-o.StartBefore))
 }
 
 // cronSpec fires StartBefore ahead of the opening, in the opening's own zone.
