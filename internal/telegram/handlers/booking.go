@@ -34,12 +34,13 @@ func NewBookingHandler(api BookingBotAPI, manager BookingManager) *BookingHandle
 	}
 }
 
-func (h *BookingHandler) Handle(update tgbotapi.Update) {
+// Handle adds a class to the athlete's schedule and reports whether it did.
+func (h *BookingHandler) Handle(update tgbotapi.Update) bool {
 	ctx := context.Background()
 
 	if !h.manager.IsAuthenticated(ctx, update.Message.Chat.ID) {
 		h.sendMessage(update.Message.Chat.ID, "Please login first using /login command")
-		return
+		return false
 	}
 
 	// Fields, not Split: a double space used to make a valid command look
@@ -49,7 +50,7 @@ func (h *BookingHandler) Handle(update tgbotapi.Update) {
 	if len(args) < 4 {
 		h.sendMessage(update.Message.Chat.ID,
 			"Please provide day, hour and class: /book <day> <hour> <class> (e.g., /book Monday 10:00 wod)")
-		return
+		return false
 	}
 
 	// Sanitize inputs
@@ -61,19 +62,19 @@ func (h *BookingHandler) Handle(update tgbotapi.Update) {
 	if err := utils.ValidateDay(rawDay); err != nil {
 		h.sendMessage(update.Message.Chat.ID,
 			"Invalid day. Please use: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday")
-		return
+		return false
 	}
 
 	if err := utils.ValidateTime(rawHour); err != nil {
 		h.sendMessage(update.Message.Chat.ID,
 			"Invalid time format. Please use HH:MM format (e.g., 10:00)")
-		return
+		return false
 	}
 
 	if err := utils.ValidateClassType(rawClassType); err != nil {
 		h.sendMessage(update.Message.Chat.ID,
 			"Invalid class name. Use the name as the box shows it in WodBuster (e.g., Wod, Open Box, Hyrox)")
-		return
+		return false
 	}
 
 	// Format inputs
@@ -97,13 +98,14 @@ func (h *BookingHandler) Handle(update tgbotapi.Update) {
 			"day", day,
 			"hour", hour,
 			"class_type", classType)
-		return
+		return false
 	}
 
 	slog.Info("class scheduled", "chat_id", update.Message.Chat.ID,
 		"day", day, "hour", hour, "class_type", classType)
 	h.sendMessage(update.Message.Chat.ID,
 		fmt.Sprintf("Class scheduled successfully! %s at %s for %s", classType, hour, day))
+	return true
 }
 
 func (h *BookingHandler) sendMessage(chatID int64, text string) {
