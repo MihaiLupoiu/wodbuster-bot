@@ -37,6 +37,7 @@ type Bot struct {
 	metrics      *Metrics
 	loginHandler *handlers.LoginHandler
 	bookHandler  *handlers.BookingHandler
+	nameCheck    *nameChecker
 	rateLimiter  *utils.RateLimiter
 	stopChan     chan struct{}
 	// removeHandler *handlers.RemoveHandler
@@ -75,14 +76,23 @@ func New(token string, manager BotManager, logger *slog.Logger) (*Bot, error) {
 	// Create rate limiter: 1 command per 2 seconds, max 5 tokens
 	rateLimiter := utils.NewRateLimiter(2*time.Second, 5)
 
-	return &Bot{
+	b := &Bot{
 		api:          api,
 		logger:       logger,
 		manager:      manager,
 		loginHandler: handlers.NewLoginHandler(api, manager),
 		bookHandler:  handlers.NewBookingHandler(api, manager),
 		rateLimiter:  rateLimiter,
-	}, nil
+	}
+	b.nameCheck = &nameChecker{
+		delay:    nameCheckDelay,
+		busy:     func() bool { return len(manager.GetActiveBookings()) > 0 },
+		rehearse: manager.Rehearse,
+		notify:   b.Notify,
+		log:      logger,
+		timers:   make(map[int64]*time.Timer),
+	}
+	return b, nil
 }
 
 func (b *Bot) Start() error {
@@ -174,7 +184,9 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 	case "login":
 		b.loginHandler.Handle(update)
 	case "book":
-		b.bookHandler.Handle(update)
+		if b.bookHandler.Handle(update) {
+			b.nameCheck.schedule(update.Message.Chat.ID)
+		}
 	case "reset":
 		b.handleReset(update)
 	case "status":

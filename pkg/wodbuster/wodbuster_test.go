@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -143,6 +144,19 @@ func TestScheduleResolve(t *testing.T) {
 	_, err = day.Resolve(wodbuster.Target{Date: day.Date, Start: wodbuster.TimeOfDay{Hour: 9}, Name: "Wod"})
 	if !errors.Is(err, wodbuster.ErrClassNotFound) {
 		t.Errorf("missing class should be ErrClassNotFound, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "nothing starts at 09:00") {
+		t.Errorf("error should say the hour is empty: %v", err)
+	}
+
+	// "Open" for "Open box" failed a real Sunday run with no hint of the
+	// right name. The error now names what is there.
+	_, err = day.Resolve(wodbuster.Target{Date: day.Date, Start: wodbuster.TimeOfDay{Hour: 8}, Name: "Open"})
+	if !errors.Is(err, wodbuster.ErrClassNotFound) {
+		t.Errorf("near miss should be ErrClassNotFound, got %v", err)
+	}
+	if !strings.Contains(err.Error(), `at 08:00 the box has "Open box"`) {
+		t.Errorf("error should name the class at that time: %v", err)
 	}
 }
 

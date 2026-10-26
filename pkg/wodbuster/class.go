@@ -2,6 +2,7 @@ package wodbuster
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -148,7 +149,19 @@ func (s Schedule) Resolve(t Target) (Class, error) {
 			return c, nil
 		}
 	}
-	return Class{}, fmt.Errorf("resolve %s: %w", t, ErrClassNotFound)
+	// Say what is there instead. A name that is nearly right — "Open" for the
+	// box's "Open box" — is the usual reason, and the athlete can only fix it
+	// if they see the real name.
+	there := s.At(t.Start)
+	if len(there) == 0 {
+		return Class{}, fmt.Errorf("resolve %s: %w; nothing starts at %s", t, ErrClassNotFound, t.Start)
+	}
+	names := make([]string, len(there))
+	for i, c := range there {
+		names[i] = strconv.Quote(c.Name)
+	}
+	return Class{}, fmt.Errorf("resolve %s: %w; at %s the box has %s",
+		t, ErrClassNotFound, t.Start, strings.Join(names, ", "))
 }
 
 // At returns every class starting at that time, whatever its name.
