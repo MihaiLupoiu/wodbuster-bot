@@ -3,6 +3,7 @@ package race_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -404,5 +405,75 @@ func TestChaseRespectsAnAttemptLimit(t *testing.T) {
 	}
 	if got := srv.Count("Calendario_Inscribir"); got != 4 {
 		t.Errorf("booking attempts = %d, want 4", got)
+	}
+}
+
+// WodBuster takes one booking per athlete at a time, so the order of the calls
+// decides which class gets the first slot. It follows Priority, not the order
+// the goals were given or the order they happened to resolve in.
+func TestChaseBooksInPriorityOrder(t *testing.T) {
+	srv := wodbustertest.New(t)
+	srv.Delay(30 * time.Millisecond)
+	week := []wodbuster.Date{monday, // Monday to Friday
+		wodbuster.NewDate(2026, time.September, 1), wodbuster.NewDate(2026, time.September, 2),
+		wodbuster.NewDate(2026, time.September, 3), wodbuster.NewDate(2026, time.September, 4)}
+	ids := make(map[int64]int) // class id -> weekday index
+	for i := range week {
+		ids[srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: week[i]})] = i
+	}
+	srv.PublishAfter(100 * time.Millisecond)
+
+	var goals []race.Goal
+	for _, day := range []int{4, 0, 2, 1, 3} { // Fri, Mon, Wed, Tue, Thu
+		goals = append(goals, race.Goal{
+			Target:   wodbuster.Target{Date: week[day], Start: at7, Name: "Wod"},
+			Priority: day,
+		})
+	}
+	results := race.Chase(context.Background(), client(t, srv), goals, fastOptions())
+
+	for i, r := range results {
+		if r.Outcome != race.OutcomeBooked {
+			t.Fatalf("goal %d: outcome = %v, err = %v", i, r.Outcome, r.Err)
+		}
+	}
+	var order []int
+	for _, r := range srv.Requests() {
+		if r.Handler == "Calendario_Inscribir" {
+			order = append(order, ids[r.ClassID])
+		}
+	}
+	if fmt.Sprint(order) != "[0 1 2 3 4]" {
+		t.Errorf("booked weekdays in order %v, want Monday to Friday", order)
+	}
+	if n := srv.MaxConcurrent("Calendario_Inscribir"); n != 1 {
+		t.Errorf("%d bookings overlapped", n)
+	}
+}
+
+// A goal that cannot find its class must not hold the others at the barrier.
+func TestChaseDoesNotWaitForAGoalThatCannotResolve(t *testing.T) {
+	srv := wodbustertest.New(t)
+	tue := wodbuster.NewDate(2026, time.September, 1)
+	srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: monday})
+	srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: tue})
+
+	opts := fastOptions()
+	opts.ResolveWait = 2 * time.Second
+	goals := []race.Goal{
+		{Target: wodbuster.Target{Date: monday, Start: at7, Name: "Open"}, Priority: 0},
+		{Target: wodbuster.Target{Date: tue, Start: at7, Name: "Wod"}, Priority: 1},
+	}
+	start := time.Now()
+	results := race.Chase(context.Background(), client(t, srv), goals, opts)
+
+	if !errors.Is(results[0].Err, wodbuster.ErrClassNotFound) {
+		t.Errorf("monday: err = %v, want class not found", results[0].Err)
+	}
+	if results[1].Outcome != race.OutcomeBooked {
+		t.Errorf("tuesday: outcome = %v, err = %v", results[1].Outcome, results[1].Err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("tuesday waited out the resolve cap: %v", took)
 	}
 }
