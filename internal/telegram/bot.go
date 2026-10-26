@@ -22,6 +22,7 @@ type BotManager interface {
 	GetUser(ctx context.Context, chatID int64) (models.User, bool)
 	LogInAndSave(ctx context.Context, chatID int64, email, password string) error
 	ScheduleBookClass(ctx context.Context, chatID int64, class models.ClassBookingSchedule) error
+	ResetSchedule(ctx context.Context, chatID int64) ([]models.ClassBookingSchedule, error)
 	GetActiveBookings() map[int64]*usecase.BookingContext
 	CancelBooking(chatID int64) bool
 	TestUserSession(ctx context.Context, chatID int64) error
@@ -174,6 +175,8 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 		b.loginHandler.Handle(update)
 	case "book":
 		b.bookHandler.Handle(update)
+	case "reset":
+		b.handleReset(update)
 	case "status":
 		b.handleStatus(update)
 	case "test":
@@ -193,6 +196,7 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 				"**Booking:**\n"+
 				"• `/book day hour class` - Add a class to your weekly schedule\n"+
 				"  Example: `/book Monday 10:00 wod` or `/book Friday 17:30 open box`\n"+
+				"• `/reset` - Clear your weekly schedule to set it up again\n"+
 				"• `/active` - Show active booking attempts\n"+
 				"• `/status` - Show your account status\n"+
 				"• `/schedule` - Show when the next run happens\n"+
@@ -241,6 +245,38 @@ func (b *Bot) handleStatus(update tgbotapi.Update) {
 	b.sendMessage(chatID, message)
 }
 
+// handleReset clears the weekly schedule and lists what it removed, so an
+// athlete who reset by mistake can put the classes back with /book.
+func (b *Bot) handleReset(update tgbotapi.Update) {
+	ctx := context.Background()
+	chatID := update.Message.Chat.ID
+
+	if !b.manager.IsAuthenticated(ctx, chatID) {
+		b.sendMessage(chatID, "❌ You are not authenticated. Please use /login first.")
+		return
+	}
+
+	removed, err := b.manager.ResetSchedule(ctx, chatID)
+	if err != nil {
+		b.logger.Error("could not reset the schedule", "chat_id", chatID, "err", err)
+		b.sendMessage(chatID, "❌ Could not clear your schedule. Please try again later.")
+		return
+	}
+	b.logger.Info("schedule reset", "chat_id", chatID, "removed", len(removed))
+	b.sendMessage(chatID, formatReset(removed))
+}
+
+func formatReset(removed []models.ClassBookingSchedule) string {
+	if len(removed) == 0 {
+		return "📭 Your schedule was already empty. Add classes with /book."
+	}
+	msg := "🧹 Schedule cleared. Removed:\n"
+	for _, c := range removed {
+		msg += "• " + c.Day + " " + c.Hour + " - " + c.ClassType + "\n"
+	}
+	return msg + "\nAdd your new classes with /book. Classes already booked on WODBuster stay booked."
+}
+
 func (b *Bot) handleTestSession(update tgbotapi.Update) {
 	ctx := context.Background()
 	chatID := update.Message.Chat.ID
@@ -280,7 +316,15 @@ func (b *Bot) handleActiveBookings(update tgbotapi.Update) {
 // Notify delivers a booking result to an athlete. It is how the Sunday run
 // reports back: nobody is watching the logs at noon.
 func (b *Bot) Notify(chatID int64, text string) {
-	b.sendMessage(chatID, text)
+	b.send(notification(chatID, text), text)
+}
+
+// notification is sent as plain text, not Markdown. Results carry error text
+// and class names nobody escaped: a stuck login's reason is "device_prompt" or
+// "login_page", and one unpaired underscore makes Telegram reject the whole
+// message, so the athlete hears nothing about the failure it was reporting.
+func notification(chatID int64, text string) tgbotapi.MessageConfig {
+	return tgbotapi.NewMessage(chatID, text)
 }
 
 // handleRehearse runs the athlete's classes right now against the published
@@ -334,15 +378,18 @@ func (b *Bot) handleSchedule(update tgbotapi.Update) {
 func (b *Bot) sendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
+	b.send(msg, text)
+}
 
+func (b *Bot) send(msg tgbotapi.MessageConfig, text string) {
 	_, err := b.api.Send(msg)
 	b.metrics.ObserveMessageSent(err)
 	if err != nil {
-		b.logger.Error("could not send message", "error", err, "chat_id", chatID,
+		b.logger.Error("could not send message", "error", err, "chat_id", msg.ChatID,
 			"text", firstLine(text))
 		return
 	}
-	b.logger.Debug("message sent", "chat_id", chatID, "chars", len(text), "text", firstLine(text))
+	b.logger.Debug("message sent", "chat_id", msg.ChatID, "chars", len(text), "text", firstLine(text))
 }
 
 // redactArgs keeps credentials out of the logs. /login carries an email and a

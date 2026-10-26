@@ -1,6 +1,23 @@
 package telegram
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
+)
+
+// Run results go out as plain text. In Markdown, the underscore in a stuck
+// login's "device_prompt" made Telegram refuse the message that reported it.
+func TestNotificationsAreNotParsedAsMarkdown(t *testing.T) {
+	msg := notification(7, "❌ Booking run failed: login failed: stuck: device_prompt")
+	if msg.ParseMode != "" {
+		t.Errorf("ParseMode = %q, want plain text", msg.ParseMode)
+	}
+	if msg.ChatID != 7 {
+		t.Errorf("ChatID = %d, want 7", msg.ChatID)
+	}
+}
 
 // The bot logs every command it receives. /login carries a password, and a
 // password in the container logs is the one mistake this bot cannot make.
@@ -40,5 +57,22 @@ func TestFirstLineKeepsRepliesShort(t *testing.T) {
 	}
 	if got := firstLine(string(long)); len(got) != 83 {
 		t.Errorf("long line not truncated: %d chars", len(got))
+	}
+}
+
+// The reset reply lists what it removed, so a reset by mistake can be undone
+// with /book.
+func TestFormatResetListsWhatWasRemoved(t *testing.T) {
+	got := formatReset([]models.ClassBookingSchedule{
+		{Day: "Monday", Hour: "07:00", ClassType: "Wod"},
+		{Day: "Friday", Hour: "17:30", ClassType: "Open Box"},
+	})
+	for _, want := range []string{"• Monday 07:00 - Wod", "• Friday 17:30 - Open Box", "/book"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("reset reply %q is missing %q", got, want)
+		}
+	}
+	if got := formatReset(nil); !strings.Contains(got, "already empty") {
+		t.Errorf("empty reset reply = %q", got)
 	}
 }

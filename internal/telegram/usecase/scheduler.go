@@ -290,6 +290,12 @@ func (bs *BookingScheduler) runForAthlete(ctx context.Context, chatID int64,
 		}
 	}
 
+	// Said before the login, so that silence at noon means the run never
+	// started, not that it is still going.
+	if !rs.DryRun {
+		bs.notify(chatID, bs.startingMessage(rs.OpensAt, len(targets)))
+	}
+
 	outcomes, err := bs.booker.Run(runCtx, user.Email, password, targets,
 		booking.RunOptions{
 			OpensAt:     rs.OpensAt,
@@ -396,6 +402,15 @@ func (bs *BookingScheduler) notify(chatID int64, text string) {
 		return
 	}
 	bs.notifier.Notify(chatID, text)
+}
+
+func (bs *BookingScheduler) startingMessage(opensAt time.Time, classes int) string {
+	if opensAt.After(time.Now()) {
+		return fmt.Sprintf("🔐 Logging in to book %d class(es) when the week opens at %s. Results will follow.",
+			classes, opensAt.In(bs.opening.Location).Format("15:04 MST"))
+	}
+	return fmt.Sprintf("🔐 Logging in to book %d class(es); the week is already open. Results will follow.",
+		classes)
 }
 
 func formatOutcome(o booking.Outcome) string {

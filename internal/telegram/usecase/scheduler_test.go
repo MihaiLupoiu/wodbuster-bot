@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,8 +111,11 @@ func TestRunForAthleteReportsFailure(t *testing.T) {
 	store.EXPECT().UpdateBookingStatus(mock.Anything, "a1", "active", "").Return(nil)
 	store.EXPECT().UpdateBookingStatus(mock.Anything, "a1", "failed", mock.Anything).Return(nil)
 	notifier.EXPECT().Notify(int64(7), mock.MatchedBy(func(s string) bool {
-		return len(s) > 0 && s[0] == 0xE2 // starts with the ❌ rune
-	})).Return()
+		return strings.HasPrefix(s, "🔐")
+	})).Return().Once()
+	notifier.EXPECT().Notify(int64(7), mock.MatchedBy(func(s string) bool {
+		return strings.HasPrefix(s, "❌")
+	})).Return().Once()
 
 	booker.EXPECT().Run(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, errors.New("login failed"))
@@ -181,8 +185,21 @@ func TestLateRunTargetsTheOpeningItMissed(t *testing.T) {
 	}
 
 	assert.True(t, o.InWindow(noon.Add(20*time.Minute)))
-	assert.False(t, o.InWindow(noon.Add(-10*time.Minute)))
 	assert.False(t, o.InWindow(noon.AddDate(0, 0, 3)))
+	assert.False(t, o.InWindow(noon.Add(-11*time.Minute)), "before the cron: leave it to the cron")
+	assert.False(t, o.InWindow(noon.Add(3*time.Hour)), "past the grace period")
+}
+
+// A restart between the cron and the opening used to skip the week: the 11:50
+// cron had gone, and 11:55 did not count as a missed opening yet.
+func TestStartupBetweenTheCronAndTheOpeningStillRuns(t *testing.T) {
+	loc := madrid(t)
+	o := DefaultOpening(loc)
+	noon := time.Date(2026, time.October, 25, 12, 0, 0, 0, loc)
+
+	assert.True(t, o.InWindow(noon.Add(-10*time.Minute)), "at the cron's own minute")
+	assert.True(t, o.InWindow(noon.Add(-5*time.Minute)))
+	assert.True(t, o.Target(noon.Add(-5*time.Minute)).Equal(noon), "and it waits for today's opening")
 }
 
 // A late run hands the booker an opening in the past, which is what makes the
@@ -243,7 +260,7 @@ func TestOutcomesStayAlignedWhenOneTargetIsUnparseable(t *testing.T) {
 	store.EXPECT().UpdateBookingStatus(mock.Anything, "good", "active", "").Return(nil)
 	// The surviving outcome must be recorded against "good", not "bad".
 	store.EXPECT().UpdateBookingStatus(mock.Anything, "good", "success", "").Return(nil)
-	notifier.EXPECT().Notify(int64(7), mock.Anything).Return().Twice()
+	notifier.EXPECT().Notify(int64(7), mock.Anything).Return().Times(3) // bad day, starting, results
 
 	booker.EXPECT().Run(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		RunAndReturn(func(_ context.Context, _, _ string, targets []booking.Target,
@@ -254,4 +271,18 @@ func TestOutcomesStayAlignedWhenOneTargetIsUnparseable(t *testing.T) {
 		})
 
 	bs.runForAthlete(context.Background(), 7, attempts, RunSettings{})
+}
+
+// The athlete hears that the run started before the login, in the box's own
+// time — CET today, the first Sunday after the clocks went back.
+func TestStartingMessageNamesTheOpeningInLocalTime(t *testing.T) {
+	bs, _, _ := schedulerFor(t, NewMockBooker(t))
+	bs.opening = DefaultOpening(madrid(t))
+
+	in10 := time.Now().Add(10 * time.Minute)
+	msg := bs.startingMessage(in10, 2)
+	assert.Contains(t, msg, in10.In(madrid(t)).Format("15:04 MST"))
+	assert.Contains(t, msg, "2 class(es)")
+
+	assert.Contains(t, bs.startingMessage(time.Now().Add(-time.Minute), 1), "already open")
 }

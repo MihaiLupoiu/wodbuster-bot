@@ -145,6 +145,22 @@ func (m *Manager) ScheduleBookClass(ctx context.Context, chatID int64, class mod
 	return m.storage.SaveClassBookingSchedule(ctx, chatID, class)
 }
 
+// ResetSchedule empties the athlete's weekly schedule so they can set it up
+// again with /book, and returns what was on it. It only touches the schedule:
+// classes already booked on WodBuster stay booked.
+func (m *Manager) ResetSchedule(ctx context.Context, chatID int64) ([]models.ClassBookingSchedule, error) {
+	user, ok := m.storage.GetUser(ctx, chatID)
+	if !ok {
+		return nil, ErrUserNotFound
+	}
+	removed := user.ClassBookingSchedules
+	user.ClassBookingSchedules = []models.ClassBookingSchedule{}
+	if err := m.storage.SaveUser(ctx, user); err != nil {
+		return nil, err
+	}
+	return removed, nil
+}
+
 // GetActiveBookings returns currently active booking attempts
 func (m *Manager) GetActiveBookings() map[int64]*BookingContext {
 	return m.bookingScheduler.GetActiveBookings()

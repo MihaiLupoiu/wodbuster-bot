@@ -441,6 +441,74 @@ func (_c *MockBotManager_Rehearse_Call) RunAndReturn(run func(ctx context.Contex
 	return _c
 }
 
+// ResetSchedule provides a mock function for the type MockBotManager
+func (_mock *MockBotManager) ResetSchedule(ctx context.Context, chatID int64) ([]models.ClassBookingSchedule, error) {
+	ret := _mock.Called(ctx, chatID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ResetSchedule")
+	}
+
+	var r0 []models.ClassBookingSchedule
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64) ([]models.ClassBookingSchedule, error)); ok {
+		return returnFunc(ctx, chatID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64) []models.ClassBookingSchedule); ok {
+		r0 = returnFunc(ctx, chatID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.ClassBookingSchedule)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, int64) error); ok {
+		r1 = returnFunc(ctx, chatID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockBotManager_ResetSchedule_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ResetSchedule'
+type MockBotManager_ResetSchedule_Call struct {
+	*mock.Call
+}
+
+// ResetSchedule is a helper method to define mock.On call
+//   - ctx context.Context
+//   - chatID int64
+func (_e *MockBotManager_Expecter) ResetSchedule(ctx interface{}, chatID interface{}) *MockBotManager_ResetSchedule_Call {
+	return &MockBotManager_ResetSchedule_Call{Call: _e.mock.On("ResetSchedule", ctx, chatID)}
+}
+
+func (_c *MockBotManager_ResetSchedule_Call) Run(run func(ctx context.Context, chatID int64)) *MockBotManager_ResetSchedule_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 int64
+		if args[1] != nil {
+			arg1 = args[1].(int64)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockBotManager_ResetSchedule_Call) Return(classBookingSchedules []models.ClassBookingSchedule, err error) *MockBotManager_ResetSchedule_Call {
+	_c.Call.Return(classBookingSchedules, err)
+	return _c
+}
+
+func (_c *MockBotManager_ResetSchedule_Call) RunAndReturn(run func(ctx context.Context, chatID int64) ([]models.ClassBookingSchedule, error)) *MockBotManager_ResetSchedule_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ScheduleBookClass provides a mock function for the type MockBotManager
 func (_mock *MockBotManager) ScheduleBookClass(ctx context.Context, chatID int64, class models.ClassBookingSchedule) error {
 	ret := _mock.Called(ctx, chatID, class)

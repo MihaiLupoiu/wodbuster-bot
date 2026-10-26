@@ -292,8 +292,10 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 				Name:  t.Class,
 			},
 			Waitlist: t.Waitlist,
+			Priority: weekdayPriority(t.Weekday),
 		}
-		log.Info("target resolved", "class", g.Target.String(), "waitlist", t.Waitlist)
+		log.Info("target resolved", "class", g.Target.String(), "waitlist", t.Waitlist,
+			"priority", g.Priority)
 		goals = append(goals, g)
 	}
 
@@ -400,4 +402,12 @@ func NextOpening(now time.Time, wd time.Weekday, hhmm string, loc *time.Location
 		next = next.AddDate(0, 0, 1)
 	}
 	return next, nil
+}
+
+// weekdayPriority books the week in calendar order, Monday first. Monday is
+// the class everyone goes for at the opening, so it gets the first booking
+// slot; the rest follow in the order they come up. Sunday, if a box ever
+// schedules one, goes last.
+func weekdayPriority(d time.Weekday) int {
+	return (int(d) + 6) % 7
 }
