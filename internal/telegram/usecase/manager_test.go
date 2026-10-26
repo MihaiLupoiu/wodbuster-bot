@@ -60,6 +60,35 @@ func TestFirstLoginCreatesTheAthlete(t *testing.T) {
 	assert.False(t, got.CreatedAt.IsZero())
 }
 
+func TestResetEmptiesTheScheduleAndKeepsTheLogin(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStorage()
+	existing := storedUser(t, 7, "pw")
+	existing.ClassBookingSchedules = []models.ClassBookingSchedule{monday7, friday7}
+	require.NoError(t, store.SaveUser(ctx, existing))
+
+	m := managerWith(t, store)
+	removed, err := m.ResetSchedule(ctx, 7)
+	require.NoError(t, err)
+	assert.Equal(t, []models.ClassBookingSchedule{monday7, friday7}, removed)
+
+	got, ok := store.GetUser(ctx, 7)
+	require.True(t, ok)
+	assert.Empty(t, got.ClassBookingSchedules)
+	assert.True(t, got.IsAuthenticated, "a reset is not a logout")
+	assert.Equal(t, existing.Password, got.Password)
+
+	require.NoError(t, m.ScheduleBookClass(ctx, 7, friday7))
+	schedules, _ := store.GetClassBookingSchedules(ctx, 7)
+	assert.Equal(t, []models.ClassBookingSchedule{friday7}, schedules, "the schedule starts again from scratch")
+}
+
+func TestResetForAnUnknownAthlete(t *testing.T) {
+	m := managerWith(t, storage.NewMemoryStorage())
+	_, err := m.ResetSchedule(context.Background(), 7)
+	assert.ErrorIs(t, err, ErrUserNotFound)
+}
+
 // /book only adds to the schedule. Booking the same class twice used to queue
 // two attempts and chase the class twice on Sunday.
 func TestBookingTheSameClassTwiceKeepsOneEntry(t *testing.T) {

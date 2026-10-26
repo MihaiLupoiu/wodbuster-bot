@@ -22,6 +22,7 @@ type BotManager interface {
 	GetUser(ctx context.Context, chatID int64) (models.User, bool)
 	LogInAndSave(ctx context.Context, chatID int64, email, password string) error
 	ScheduleBookClass(ctx context.Context, chatID int64, class models.ClassBookingSchedule) error
+	ResetSchedule(ctx context.Context, chatID int64) ([]models.ClassBookingSchedule, error)
 	GetActiveBookings() map[int64]*usecase.BookingContext
 	CancelBooking(chatID int64) bool
 	TestUserSession(ctx context.Context, chatID int64) error
@@ -174,6 +175,8 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 		b.loginHandler.Handle(update)
 	case "book":
 		b.bookHandler.Handle(update)
+	case "reset":
+		b.handleReset(update)
 	case "status":
 		b.handleStatus(update)
 	case "test":
@@ -193,6 +196,7 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 				"**Booking:**\n"+
 				"• `/book day hour class` - Add a class to your weekly schedule\n"+
 				"  Example: `/book Monday 10:00 wod` or `/book Friday 17:30 open box`\n"+
+				"• `/reset` - Clear your weekly schedule to set it up again\n"+
 				"• `/active` - Show active booking attempts\n"+
 				"• `/status` - Show your account status\n"+
 				"• `/schedule` - Show when the next run happens\n"+
@@ -239,6 +243,38 @@ func (b *Bot) handleStatus(update tgbotapi.Update) {
 	}
 
 	b.sendMessage(chatID, message)
+}
+
+// handleReset clears the weekly schedule and lists what it removed, so an
+// athlete who reset by mistake can put the classes back with /book.
+func (b *Bot) handleReset(update tgbotapi.Update) {
+	ctx := context.Background()
+	chatID := update.Message.Chat.ID
+
+	if !b.manager.IsAuthenticated(ctx, chatID) {
+		b.sendMessage(chatID, "❌ You are not authenticated. Please use /login first.")
+		return
+	}
+
+	removed, err := b.manager.ResetSchedule(ctx, chatID)
+	if err != nil {
+		b.logger.Error("could not reset the schedule", "chat_id", chatID, "err", err)
+		b.sendMessage(chatID, "❌ Could not clear your schedule. Please try again later.")
+		return
+	}
+	b.logger.Info("schedule reset", "chat_id", chatID, "removed", len(removed))
+	b.sendMessage(chatID, formatReset(removed))
+}
+
+func formatReset(removed []models.ClassBookingSchedule) string {
+	if len(removed) == 0 {
+		return "📭 Your schedule was already empty. Add classes with /book."
+	}
+	msg := "🧹 Schedule cleared. Removed:\n"
+	for _, c := range removed {
+		msg += "• " + c.Day + " " + c.Hour + " - " + c.ClassType + "\n"
+	}
+	return msg + "\nAdd your new classes with /book. Classes already booked on WODBuster stay booked."
 }
 
 func (b *Bot) handleTestSession(update tgbotapi.Update) {
