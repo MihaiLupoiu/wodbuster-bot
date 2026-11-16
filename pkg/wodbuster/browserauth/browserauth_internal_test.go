@@ -18,7 +18,10 @@ func TestStuckReason(t *testing.T) {
 			"https://wodbuster.com/account/login.aspx", pageState{CF: true}, StuckCloudflare},
 		"device prompt": {
 			"https://wodbuster.com/account/login.aspx",
-			pageState{Body: "¿quieres recordar este dispositivo?"}, StuckDevicePrompt},
+			pageState{Body: "¿quieres recordar este dispositivo?", Device: true}, StuckDevicePrompt},
+		"device prompt in English, as on 2026-11-15": {
+			"https://wodbuster.com/account/login.aspx",
+			pageState{Body: "sign in\nremember this device?", Lang: "en", Device: true}, StuckDevicePrompt},
 		"roadtobox, as on 2026-10-14": {
 			"https://wodbuster.com/account/roadtobox.aspx", pageState{}, StuckRoadToBox},
 		"back on the login form, as on 2026-10-18": {

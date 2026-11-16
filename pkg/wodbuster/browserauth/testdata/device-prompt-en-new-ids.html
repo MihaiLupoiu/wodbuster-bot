@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<!-- The English step with the radio ids renamed, so that only value= and the
+     label text are left to find the answer by. -->
+<html lang="en"><head><meta charset="utf-8"><title>Sign in - WodBuster</title></head>
+<body>
+<form method="post" action="./login.aspx" id="form">
+  <h2>Sign in</h2>
+  <div id="body_body_CtlUp">
+    <h3>Remember this device?</h3>
+    <label class="button">
+      <input id="body_body_CtlTrust_CtlSeguro" type="radio" name="ctl00$ctl00$body$body$CtlConfiar$dispositivo" value="CtlSeguro" onclick="document.body.setAttribute('data-picked','CtlSeguro')"><label for="body_body_CtlTrust_CtlSeguro">✅ Remember this device</label>
+      <span>👉 You will not need to sign in next time.</span>
+    </label>
+    <label class="button">
+      <input id="body_body_CtlTrust_CtlNoSeguro" type="radio" name="ctl00$ctl00$body$body$CtlConfiar$dispositivo" value="CtlNoSeguro" onclick="document.body.setAttribute('data-picked','CtlNoSeguro')"><label for="body_body_CtlTrust_CtlNoSeguro">🔒 Do not remember</label>
+      <span>👉 We will ask for your password next time.</span>
+    </label>
+  </div>
+</form>
+</body></html>

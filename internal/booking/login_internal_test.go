@@ -44,7 +44,7 @@ func TestAStuckLoginIsTriedAgain(t *testing.T) {
 	var calls *int
 	s.login, calls = scriptedLogin(errStuck, errStuck)
 
-	sess, err := s.loginWithRetry(context.Background(), s.log, "a@example.com", "pw")
+	sess, err := s.loginWithRetry(context.Background(), s.log, "a@example.com", "pw", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "a", sess.AthleteID)
 	assert.Equal(t, 3, *calls)
@@ -55,9 +55,26 @@ func TestLoginGivesUpAfterItsAttempts(t *testing.T) {
 	var calls *int
 	s.login, calls = scriptedLogin(errStuck, errStuck, errStuck, errStuck)
 
-	_, err := s.loginWithRetry(context.Background(), s.log, "a@example.com", "pw")
+	_, err := s.loginWithRetry(context.Background(), s.log, "a@example.com", "pw", nil)
 	assert.ErrorIs(t, err, errStuck)
 	assert.Equal(t, 3, *calls)
+}
+
+// The run reports each failed try while there is still a next one, so the
+// people waiting hear about it before the last try is spent.
+func TestEachRetryIsReported(t *testing.T) {
+	s := quietService(3)
+	s.login, _ = scriptedLogin(errStuck, errStuck, errStuck)
+
+	type report struct{ attempt, of int }
+	var got []report
+	_, err := s.loginWithRetry(context.Background(), s.log, "a@example.com", "pw",
+		func(attempt, of int, err error) {
+			assert.ErrorIs(t, err, errStuck)
+			got = append(got, report{attempt, of})
+		})
+	assert.ErrorIs(t, err, errStuck)
+	assert.Equal(t, []report{{1, 3}, {2, 3}}, got, "the last failure is the run's error, not a retry")
 }
 
 // Wrong credentials stay wrong; trying them again only risks the account.
@@ -66,7 +83,7 @@ func TestRejectedCredentialsAreNotRetried(t *testing.T) {
 	var calls *int
 	s.login, calls = scriptedLogin(browserauth.ErrRejected)
 
-	_, err := s.loginWithRetry(context.Background(), s.log, "a@example.com", "pw")
+	_, err := s.loginWithRetry(context.Background(), s.log, "a@example.com", "pw", nil)
 	assert.ErrorIs(t, err, browserauth.ErrRejected)
 	assert.Equal(t, 1, *calls)
 }
@@ -79,7 +96,7 @@ func TestLoginRetryStopsWithTheRun(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	_, err := s.loginWithRetry(ctx, s.log, "a@example.com", "pw")
+	_, err := s.loginWithRetry(ctx, s.log, "a@example.com", "pw", nil)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.ErrorIs(t, err, errStuck, "the login's own error is kept")
 	assert.Equal(t, 1, *calls)

@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -74,5 +75,17 @@ func TestFormatResetListsWhatWasRemoved(t *testing.T) {
 	}
 	if got := formatReset(nil); !strings.Contains(got, "already empty") {
 		t.Errorf("empty reset reply = %q", got)
+	}
+}
+
+func TestFailureReportNamesTheAthlete(t *testing.T) {
+	err := errors.New("login failed: stuck: login_page")
+	got := failureReport("/test", 7, "athlete@example.com", err)
+	want := "⚠️ /test failed for athlete@example.com (chat 7): login failed: stuck: login_page"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got := failureReport("/rehearse", 7, "", err); !strings.Contains(got, "for chat 7:") {
+		t.Errorf("without an email: %q", got)
 	}
 }
