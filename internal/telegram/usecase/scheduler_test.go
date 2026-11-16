@@ -50,6 +50,8 @@ func TestOpeningNextIsInTheGymsZone(t *testing.T) {
 func schedulerFor(t *testing.T, booker Booker) (*BookingScheduler, *MockStorage, *MockNotifier) {
 	t.Helper()
 	store := NewMockStorage(t)
+	// A failure looks for admins to tell; these tests have none.
+	store.EXPECT().ListUsers(mock.Anything).Return(nil, nil).Maybe()
 	notifier := NewMockNotifier(t)
 	bs := NewBookingScheduler(store, booker, DefaultOpening(madrid(t)), testKey,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -61,7 +63,8 @@ func storedUser(t *testing.T, chatID int64, password string) models.User {
 	t.Helper()
 	enc, err := utils.EncryptPassword(password, testKey)
 	require.NoError(t, err)
-	return models.User{ChatID: chatID, Email: "athlete@example.com", Password: enc, IsAuthenticated: true}
+	return models.User{ChatID: chatID, Email: "athlete@example.com", Password: enc, IsAuthenticated: true,
+		Role: models.RoleUser, Status: models.StatusActive}
 }
 
 // The whole point of the rework: one login per athlete, every class of theirs

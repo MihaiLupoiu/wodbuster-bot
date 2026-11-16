@@ -304,6 +304,68 @@ func (_c *MockBotManager_IsAuthenticated_Call) RunAndReturn(run func(ctx context
 	return _c
 }
 
+// ListUsers provides a mock function for the type MockBotManager
+func (_mock *MockBotManager) ListUsers(ctx context.Context) ([]models.User, error) {
+	ret := _mock.Called(ctx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListUsers")
+	}
+
+	var r0 []models.User
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context) ([]models.User, error)); ok {
+		return returnFunc(ctx)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context) []models.User); ok {
+		r0 = returnFunc(ctx)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.User)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = returnFunc(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockBotManager_ListUsers_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListUsers'
+type MockBotManager_ListUsers_Call struct {
+	*mock.Call
+}
+
+// ListUsers is a helper method to define mock.On call
+//   - ctx context.Context
+func (_e *MockBotManager_Expecter) ListUsers(ctx interface{}) *MockBotManager_ListUsers_Call {
+	return &MockBotManager_ListUsers_Call{Call: _e.mock.On("ListUsers", ctx)}
+}
+
+func (_c *MockBotManager_ListUsers_Call) Run(run func(ctx context.Context)) *MockBotManager_ListUsers_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockBotManager_ListUsers_Call) Return(users []models.User, err error) *MockBotManager_ListUsers_Call {
+	_c.Call.Return(users, err)
+	return _c
+}
+
+func (_c *MockBotManager_ListUsers_Call) RunAndReturn(run func(ctx context.Context) ([]models.User, error)) *MockBotManager_ListUsers_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // LogInAndSave provides a mock function for the type MockBotManager
 func (_mock *MockBotManager) LogInAndSave(ctx context.Context, chatID int64, email string, password string) error {
 	ret := _mock.Called(ctx, chatID, email, password)
@@ -568,6 +630,78 @@ func (_c *MockBotManager_ScheduleBookClass_Call) Return(err error) *MockBotManag
 }
 
 func (_c *MockBotManager_ScheduleBookClass_Call) RunAndReturn(run func(ctx context.Context, chatID int64, class models.ClassBookingSchedule) error) *MockBotManager_ScheduleBookClass_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SetUserStatus provides a mock function for the type MockBotManager
+func (_mock *MockBotManager) SetUserStatus(ctx context.Context, chatID int64, status string) (models.User, error) {
+	ret := _mock.Called(ctx, chatID, status)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetUserStatus")
+	}
+
+	var r0 models.User
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64, string) (models.User, error)); ok {
+		return returnFunc(ctx, chatID, status)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64, string) models.User); ok {
+		r0 = returnFunc(ctx, chatID, status)
+	} else {
+		r0 = ret.Get(0).(models.User)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, int64, string) error); ok {
+		r1 = returnFunc(ctx, chatID, status)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockBotManager_SetUserStatus_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetUserStatus'
+type MockBotManager_SetUserStatus_Call struct {
+	*mock.Call
+}
+
+// SetUserStatus is a helper method to define mock.On call
+//   - ctx context.Context
+//   - chatID int64
+//   - status string
+func (_e *MockBotManager_Expecter) SetUserStatus(ctx interface{}, chatID interface{}, status interface{}) *MockBotManager_SetUserStatus_Call {
+	return &MockBotManager_SetUserStatus_Call{Call: _e.mock.On("SetUserStatus", ctx, chatID, status)}
+}
+
+func (_c *MockBotManager_SetUserStatus_Call) Run(run func(ctx context.Context, chatID int64, status string)) *MockBotManager_SetUserStatus_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 int64
+		if args[1] != nil {
+			arg1 = args[1].(int64)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockBotManager_SetUserStatus_Call) Return(user models.User, err error) *MockBotManager_SetUserStatus_Call {
+	_c.Call.Return(user, err)
+	return _c
+}
+
+func (_c *MockBotManager_SetUserStatus_Call) RunAndReturn(run func(ctx context.Context, chatID int64, status string) (models.User, error)) *MockBotManager_SetUserStatus_Call {
 	_c.Call.Return(run)
 	return _c
 }

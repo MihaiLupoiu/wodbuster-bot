@@ -28,6 +28,8 @@ type BotManager interface {
 	TestUserSession(ctx context.Context, chatID int64) error
 	GetScheduleInfo() string
 	Rehearse(ctx context.Context, chatID int64) ([]booking.Outcome, error)
+	ListUsers(ctx context.Context) ([]models.User, error)
+	SetUserStatus(ctx context.Context, chatID int64, status string) (models.User, error)
 }
 
 type Bot struct {
@@ -40,10 +42,6 @@ type Bot struct {
 	nameCheck    *nameChecker
 	rateLimiter  *utils.RateLimiter
 	stopChan     chan struct{}
-
-	// admin hears about every failed /test, /rehearse and class name check.
-	// Zero means nobody does but the athlete.
-	admin int64
 	// removeHandler *handlers.RemoveHandler
 }
 
@@ -51,14 +49,6 @@ type Bot struct {
 // exactly as before, counting nothing.
 func (b *Bot) WithMetrics(m *Metrics) *Bot {
 	b.metrics = m
-	return b
-}
-
-// WithAdmin names the chat that hears about other athletes' failed checks. On
-// 2026-11-13 an athlete's /rehearse failed exactly as Sunday's run would two
-// days later, and only that athlete saw it.
-func (b *Bot) WithAdmin(chatID int64) *Bot {
-	b.admin = chatID
 	return b
 }
 
@@ -190,14 +180,21 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 			"took", took.Round(time.Millisecond))
 	}()
 
+	ctx := context.Background()
+	if !b.gate(ctx, chatID, command) {
+		return
+	}
+
 	switch update.Message.Command() {
 	case "start":
 		b.sendMessage(update.Message.Chat.ID,
 			"Welcome to WODBuster Bot! 🏋️‍♂️\n\n"+
 				"This bot helps you automatically book your fitness classes.\n"+
-				"Please use /login to authenticate first.")
+				"Please use /login to authenticate first. New accounts are approved by the admin.")
 	case "login":
-		b.loginHandler.Handle(update)
+		if b.loginHandler.Handle(update) {
+			b.afterLogin(ctx, chatID, update.Message.From.UserName)
+		}
 	case "book":
 		if b.bookHandler.Handle(update) {
 			b.nameCheck.schedule(update.Message.Chat.ID)
@@ -214,29 +211,43 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 		b.handleSchedule(update)
 	case "rehearse":
 		b.handleRehearse(update)
+	case "users":
+		b.handleUsers(ctx, chatID)
+	case "approve":
+		b.handleSetStatus(ctx, chatID, update.Message.CommandArguments(), models.StatusActive)
+	case "disable":
+		b.handleSetStatus(ctx, chatID, update.Message.CommandArguments(), models.StatusDisabled)
+	case "announcement":
+		b.handleAnnouncement(ctx, chatID, update.Message.CommandArguments())
 	case "help":
-		b.sendMessage(update.Message.Chat.ID,
-			"🤖 **WODBuster Bot Commands**\n\n"+
-				"**Authentication:**\n"+
-				"• `/login email password` - Login to WODBuster\n"+
-				"• `/test` - Test your current session\n\n"+
-				"**Booking:**\n"+
-				"• `/book day hour class` - Add a class to your weekly schedule\n"+
-				"  Example: `/book Monday 10:00 wod` or `/book Friday 17:30 open box`\n"+
-				"• `/reset` - Clear your weekly schedule to set it up again\n"+
-				"• `/active` - Show active booking attempts\n"+
-				"• `/status` - Show your account status\n"+
-				"• `/schedule` - Show when the next run happens\n"+
-				"• `/rehearse` - Try your classes now, booking nothing\n\n"+
-				"**Other:**\n"+
-				"• `/help` - Show this help message\n\n"+
-				"**How it works:**\n"+
-				"1. Login with your WODBuster credentials\n"+
-				"2. Schedule classes with `/book`\n"+
-				"3. Every Sunday the bot wakes up before noon and books your classes the moment the week opens!")
+		help := "🤖 **WODBuster Bot Commands**\n\n" +
+			"**Authentication:**\n" +
+			"• `/login email password` - Login to WODBuster\n" +
+			"• `/test` - Test your current session\n\n" +
+			"**Booking:**\n" +
+			"• `/book day hour class` - Add a class to your weekly schedule\n" +
+			"  Example: `/book Monday 10:00 wod` or `/book Friday 17:30 open box`\n" +
+			"• `/reset` - Clear your weekly schedule to set it up again\n" +
+			"• `/active` - Show active booking attempts\n" +
+			"• `/status` - Show your account status\n" +
+			"• `/schedule` - Show when the next run happens\n" +
+			"• `/rehearse` - Try your classes now, booking nothing\n\n" +
+			"**Other:**\n" +
+			"• `/help` - Show this help message\n\n" +
+			"**How it works:**\n" +
+			"1. Login with your WODBuster credentials\n" +
+			"2. Schedule classes with `/book`\n" +
+			"3. Every Sunday the bot wakes up before noon and books your classes the moment the week opens!"
+		if u, ok := b.manager.GetUser(ctx, chatID); ok && u.IsAdmin() && u.IsActive() {
+			help += "\n\n**Admin:**\n" +
+				"• `/users` - List everyone, waiting approvals first\n" +
+				"• `/approve chat_id` - Activate an account (also re-enables a disabled one)\n" +
+				"• `/disable chat_id` - Switch an account off\n" +
+				"• `/announcement text` - Send a message to every active user"
+		}
+		b.sendMessage(chatID, help)
 	default:
-		b.sendMessage(update.Message.Chat.ID,
-			"I don't know that command. Use /help to see available commands")
+		b.sendMessage(update.Message.Chat.ID, unknownCommand)
 	}
 }
 
@@ -258,6 +269,7 @@ func (b *Bot) handleStatus(update tgbotapi.Update) {
 	scheduleCount := len(user.ClassBookingSchedules)
 
 	message := "📊 **Your Status**\n\n" +
+		"Account: " + statusLine(user) + "\n" +
 		"Authentication: " + status + "\n" +
 		"Email: " + user.Email + "\n" +
 		"Scheduled Classes: " + fmt.Sprintf("%d", scheduleCount) + "\n\n"
@@ -348,7 +360,7 @@ func (b *Bot) handleActiveBookings(update tgbotapi.Update) {
 // Notify delivers a booking result to an athlete. It is how the Sunday run
 // reports back: nobody is watching the logs at noon.
 func (b *Bot) Notify(chatID int64, text string) {
-	b.send(notification(chatID, text), text)
+	_ = b.send(notification(chatID, text), text)
 }
 
 // notification is sent as plain text, not Markdown. Results carry error text
@@ -391,17 +403,30 @@ func (b *Bot) handleRehearse(update tgbotapi.Update) {
 	b.Notify(chatID, msg)
 }
 
-// reportFailure tells the admin that a check failed for an athlete. The admin's
-// own failures are already in front of them.
+// reportFailure tells the admins that a check failed for an athlete. On
+// 2026-11-13 an athlete's /rehearse failed exactly as Sunday's run would two
+// days later, and only that athlete saw it.
 func (b *Bot) reportFailure(chatID int64, what string, err error) {
-	if b.admin == 0 || chatID == b.admin {
-		return
-	}
 	var email string
 	if u, ok := b.manager.GetUser(context.Background(), chatID); ok {
 		email = u.Email
 	}
-	b.Notify(b.admin, failureReport(what, chatID, email, err))
+	b.notifyAdmins(context.Background(), chatID, failureReport(what, chatID, email, err))
+}
+
+// notifyAdmins tells every active admin, except the one it is about: that
+// admin already has it in front of them. No admin, no message.
+func (b *Bot) notifyAdmins(ctx context.Context, except int64, text string) {
+	users, err := b.manager.ListUsers(ctx)
+	if err != nil {
+		b.logger.Error("could not find the admins to tell", "err", err)
+		return
+	}
+	for _, a := range models.ActiveAdmins(users) {
+		if a.ChatID != except {
+			b.Notify(a.ChatID, text)
+		}
+	}
 }
 
 func failureReport(what string, chatID int64, email string, err error) string {
@@ -433,18 +458,25 @@ func (b *Bot) handleSchedule(update tgbotapi.Update) {
 func (b *Bot) sendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
-	b.send(msg, text)
+	_ = b.send(msg, text)
 }
 
-func (b *Bot) send(msg tgbotapi.MessageConfig, text string) {
+func (b *Bot) send(msg tgbotapi.MessageConfig, text string) error {
 	_, err := b.api.Send(msg)
 	b.metrics.ObserveMessageSent(err)
 	if err != nil {
 		b.logger.Error("could not send message", "error", err, "chat_id", msg.ChatID,
 			"text", firstLine(text))
-		return
+		return err
 	}
 	b.logger.Debug("message sent", "chat_id", msg.ChatID, "chars", len(text), "text", firstLine(text))
+	return nil
+}
+
+// deliver is Notify that says whether the message arrived, for a broadcast
+// that reports what it reached.
+func (b *Bot) deliver(chatID int64, text string) error {
+	return b.send(notification(chatID, text), text)
 }
 
 // redactArgs keeps credentials out of the logs. /login carries an email and a

@@ -52,12 +52,8 @@ type BookingScheduler struct {
 	// that one and not the daily login check.
 	weeklyRun cron.EntryID
 
-	// admin hears about failures that the athlete alone used to hear about, or
-	// nobody did. Zero means no admin.
-	admin int64
-
 	// loginCheckSpec is when the daily login check runs, as a cron spec in
-	// the gym's zone. Empty, or no admin, turns it off.
+	// the gym's zone. Empty turns it off.
 	loginCheckSpec string
 	loginFailing   atomic.Bool // the last login check failed
 }
@@ -84,11 +80,7 @@ func (bs *BookingScheduler) SetMetrics(m *Metrics) { bs.metrics = m }
 // because the bot and the scheduler need each other.
 func (bs *BookingScheduler) SetNotifier(n Notifier) { bs.notifier = n }
 
-// SetAdmin names the chat that hears about failures: the daily login check,
-// and every athlete's run that goes wrong. Called once, at startup.
-func (bs *BookingScheduler) SetAdmin(chatID int64) { bs.admin = chatID }
-
-// SetLoginCheck schedules a daily login with the admin's account, so that a
+// SetLoginCheck schedules a daily login with an admin's account, so that a
 // login WodBuster has broken is found days before the opening rather than
 // during it. spec is a cron spec in the gym's zone; empty turns it off. Called
 // once, before Start.
@@ -107,17 +99,13 @@ func (bs *BookingScheduler) Start() error {
 	}
 	bs.weeklyRun = id
 
-	switch {
-	case bs.loginCheckSpec == "":
+	if bs.loginCheckSpec == "" {
 		bs.logger.Info("daily login check is off")
-	case bs.admin == 0:
-		bs.logger.Warn("daily login check is off: it logs in as the admin, and there is no admin",
-			"cron", bs.loginCheckSpec)
-	default:
+	} else {
 		if _, err := bs.cron.AddFunc(bs.loginCheckSpec, bs.CheckLogin); err != nil {
 			return fmt.Errorf("failed to schedule the login check %q: %w", bs.loginCheckSpec, err)
 		}
-		bs.logger.Info("daily login check scheduled", "cron", bs.loginCheckSpec, "chat_id", bs.admin)
+		bs.logger.Info("daily login check scheduled", "cron", bs.loginCheckSpec)
 	}
 
 	bs.cron.Start()
@@ -198,7 +186,7 @@ func (bs *BookingScheduler) runWeek(now time.Time) {
 	}
 	bs.logger.Info("booking for athletes", "athletes", len(byAthlete))
 
-	// The admin hears about the first failed login of the run straight away:
+	// The admins hear about the first failed login of the run straight away:
 	// one is enough to go and look, and on 2026-11-15 every one of eighteen
 	// failed the same way.
 	var alertAdmin sync.Once
@@ -235,7 +223,7 @@ func (bs *BookingScheduler) weekAttempts(ctx context.Context, users []models.Use
 	week := opensAt.Format("2006-01-02")
 	out := map[int64][]models.BookingAttempt{}
 	for _, u := range users {
-		if !u.IsAuthenticated || len(u.ClassBookingSchedules) == 0 {
+		if !u.IsAuthenticated || !u.IsActive() || len(u.ClassBookingSchedules) == 0 {
 			continue
 		}
 		for _, c := range u.ClassBookingSchedules {
@@ -443,15 +431,13 @@ func (bs *BookingScheduler) fail(ctx context.Context, chatID int64,
 	}
 	bs.notify(chatID, "❌ Booking run failed: "+err.Error()+
 		"\n\nNothing was booked for you this time. Book your classes by hand on WodBuster.")
-	if chatID != bs.admin {
-		bs.notifyAdmin(fmt.Sprintf("❌ Booking run failed for chat %d (%d class(es)): %v",
-			chatID, len(attempts), err))
-	}
+	bs.notifyAdmins(ctx, chatID, fmt.Sprintf("❌ Booking run failed for chat %d (%d class(es)): %v",
+		chatID, len(attempts), err))
 }
 
 // loginTrouble is a Sunday run's login failing with tries left. The athlete
 // hears about it on the first failure, while there is still time before the
-// opening to book by hand; the admin hears about the first failure of the
+// opening to book by hand; the admins hear about the first failure of the
 // whole run.
 func (bs *BookingScheduler) loginTrouble(chatID int64, opensAt time.Time,
 	attempt, of int, err error, alertAdmin *sync.Once) {
@@ -461,21 +447,21 @@ func (bs *BookingScheduler) loginTrouble(chatID int64, opensAt time.Time,
 			"I'm still trying, but if you don't get your results by %s, book your classes by hand.",
 			attempt, of, opensAt.In(bs.opening.Location).Format("15:04")))
 	}
-	if chatID == bs.admin {
-		return
-	}
 	alertAdmin.Do(func() {
-		bs.notifyAdmin(fmt.Sprintf("⚠️ Sunday run: a login failed for chat %d (try %d of %d): %v\n"+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		bs.notifyAdmins(ctx, chatID, fmt.Sprintf("⚠️ Sunday run: a login failed for chat %d (try %d of %d): %v\n"+
 			"Other athletes may follow; each one is told to book by hand if it keeps failing.",
 			chatID, attempt, of, err))
 	})
 }
 
-// CheckLogin logs in with the admin's stored credentials and books nothing.
-// It runs daily so that WodBuster changing its login under us — which it did
-// between 2026-11-08 and 2026-11-13, found only when the Sunday run failed —
-// is found with days to spare. A failure goes to the admin every day it lasts;
-// the day it works again says so once.
+// CheckLogin logs in with the first active admin's stored credentials and
+// books nothing. It runs daily so that WodBuster changing its login under us —
+// which it did between 2026-11-08 and 2026-11-13, found only when the Sunday
+// run failed — is found with days to spare. A failure goes to the admins every
+// day it lasts; the day it works again says so once. With no admin there is
+// no account to check with and nobody to tell, so it does nothing.
 func (bs *BookingScheduler) CheckLogin() {
 	if len(bs.GetActiveBookings()) > 0 {
 		bs.logger.Info("skipping the login check during a booking run")
@@ -485,39 +471,56 @@ func (bs *BookingScheduler) CheckLogin() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	user, ok := bs.storage.GetUser(ctx, bs.admin)
-	if !ok || user.Email == "" {
-		bs.logger.Warn("login check skipped: the admin has no WodBuster login stored",
-			"chat_id", bs.admin)
+	users, err := bs.storage.ListUsers(ctx)
+	if err != nil {
+		bs.logger.Error("login check skipped: could not read the users", "error", err)
 		bs.metrics.observeLoginCheck("skipped")
-		bs.notifyAdmin("⚠️ The daily login check needs your WodBuster login. Use /login once.")
 		return
 	}
+	admins := models.ActiveAdmins(users)
+	if len(admins) == 0 {
+		bs.logger.Warn("login check skipped: there is no active admin")
+		bs.metrics.observeLoginCheck("skipped")
+		return
+	}
+	user := admins[0]
 	password, err := utils.DecryptPassword(user.Password, bs.encryptionKey)
 	if err == nil {
 		err = bs.booker.Authenticate(ctx, user.Email, password)
 	}
 	if err != nil {
-		bs.logger.Error("login check failed", "chat_id", bs.admin, "error", err)
+		bs.logger.Error("login check failed", "chat_id", user.ChatID, "error", err)
 		bs.metrics.observeLoginCheck("failed")
 		bs.loginFailing.Store(true)
-		bs.notifyAdmin("🚨 Daily login check failed: " + err.Error() + "\n\n" +
-			"The Sunday run will fail the same way until this is fixed. " +
+		bs.tellAdmins(admins, 0, "🚨 Daily login check failed for "+user.Email+": "+err.Error()+"\n\n"+
+			"The Sunday run will fail the same way until this is fixed. "+
 			"The diagnostics volume has a screenshot of where it stopped.")
 		return
 	}
-	bs.logger.Info("login check passed", "chat_id", bs.admin)
+	bs.logger.Info("login check passed", "chat_id", user.ChatID)
 	bs.metrics.observeLoginCheck("passed")
 	if bs.loginFailing.Swap(false) {
-		bs.notifyAdmin("✅ Daily login check works again.")
+		bs.tellAdmins(admins, 0, "✅ Daily login check works again.")
 	}
 }
 
-func (bs *BookingScheduler) notifyAdmin(text string) {
-	if bs.admin == 0 {
+// notifyAdmins tells every active admin, except the one whose own run it is:
+// that admin has already heard about it as an athlete. No admin, no message.
+func (bs *BookingScheduler) notifyAdmins(ctx context.Context, except int64, text string) {
+	users, err := bs.storage.ListUsers(ctx)
+	if err != nil {
+		bs.logger.Error("could not find the admins to tell", "error", err)
 		return
 	}
-	bs.notify(bs.admin, text)
+	bs.tellAdmins(models.ActiveAdmins(users), except, text)
+}
+
+func (bs *BookingScheduler) tellAdmins(admins []models.User, except int64, text string) {
+	for _, a := range admins {
+		if a.ChatID != except {
+			bs.notify(a.ChatID, text)
+		}
+	}
 }
 
 // recordingContext detaches from a context that may already be done, so that

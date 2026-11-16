@@ -31,8 +31,8 @@ first. Each one has already happened.
 | `wodbuster_bot_runs_total` | Counter | `result` (completed, failed) | Did the weekly run happen at all. |
 | `wodbuster_bot_run_lateness_seconds` | Histogram | — | Actual start minus intended start. On 2026-10-04 the cron fired 30 minutes late because the host had been suspended; nothing measured that, and the run was lost. |
 | `wodbuster_bot_run_duration_seconds` | Histogram | — | A run that takes 20 minutes is waiting for something it should not be waiting for. |
-| `wodbuster_bot_login_check_last_success_timestamp_seconds` | Gauge | — | The daily login check (`LOGIN_CHECK_CRON`, with the admin's account) last logged in. On 2026-11-15 WodBuster had broken the login two days before the run found out. `time() - metric > 26h` means the login is broken or the check is not running. |
-| `wodbuster_bot_login_checks_total` | Counter | `result` (passed, failed, skipped) | The daily check's history. `skipped` is a run in progress or an admin with no stored login. |
+| `wodbuster_bot_login_check_last_success_timestamp_seconds` | Gauge | — | The daily login check (`LOGIN_CHECK_CRON`, with the first admin's account) last logged in. On 2026-11-15 WodBuster had broken the login two days before the run found out. `time() - metric > 26h` means the login is broken or the check is not running. |
+| `wodbuster_bot_login_checks_total` | Counter | `result` (passed, failed, skipped) | The daily check's history. `skipped` is a run in progress, or no active admin to log in as. |
 
 ## Tier 2 — the booking itself
 
@@ -107,7 +107,7 @@ in this deployment:
 2. **The run started late** — `wodbuster_bot_run_lateness_seconds > 120`.
 2b. **The daily login check has not passed in 26 hours** —
    `time() - wodbuster_bot_login_check_last_success_timestamp_seconds > 93600`.
-   The bot already messages the admin when a check fails; this catches the
+   The bot already messages the admins when a check fails; this catches the
    check itself not running.
 3. **A booking failed for a reason that is not "full"** — the quota, session,
    busy and api-error buckets of `booking_failures_total`.

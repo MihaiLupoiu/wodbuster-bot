@@ -22,7 +22,7 @@ func TestLoginHandler_Handle(t *testing.T) {
 				manager.EXPECT().LogInAndSave(mock.Anything, testChatID, "testuser@email.com", "password123").Return(nil)
 				api.EXPECT().Send(mock.MatchedBy(func(c tgbotapi.Chattable) bool {
 					msg, ok := c.(tgbotapi.MessageConfig)
-					return ok && msg.Text == "Login successful! You can now use /book and /remove commands."
+					return ok && msg.Text == "✅ Login successful."
 				})).Return(tgbotapi.Message{}, nil)
 			},
 		},
