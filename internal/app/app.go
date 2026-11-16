@@ -99,6 +99,16 @@ func New(config *Config) (*App, error) {
 		bookingScheduler,
 		logger,
 	)
+	manager.SetAdmin(config.AdminChatID)
+
+	// Before anything reads a status: a user saved before statuses existed
+	// has none, and the run books only active users. Failing here, and
+	// restarting, beats a Sunday run that silently skips everyone.
+	bootCtx, cancelBoot := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelBoot()
+	if err := manager.Bootstrap(bootCtx); err != nil {
+		return nil, fmt.Errorf("failed to set user roles and statuses: %w", err)
+	}
 
 	// Initialize Telegram bot
 	bot, err := telegram.New(config.TelegramToken, manager, logger)

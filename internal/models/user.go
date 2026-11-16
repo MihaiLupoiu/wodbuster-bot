@@ -9,6 +9,13 @@ type User struct {
 	Password              string                 `json:"password" bson:"password"`
 	ClassBookingSchedules []ClassBookingSchedule `json:"class_booking_schedules" bson:"class_booking_schedules"`
 
+	// Role and Status decide who may use the bot. A newcomer's /login is
+	// checked and saved, but the account stays pending until an admin approves
+	// it: the run books only for active accounts. Documents from before these
+	// fields existed are made active users at startup (Manager.Bootstrap).
+	Role   string `json:"role" bson:"role"`
+	Status string `json:"status" bson:"status"`
+
 	// No session is stored. A WodBuster session is a session cookie with no
 	// expiry of its own, dropped by the server after a while idle, so one
 	// saved on Monday is worthless by Sunday. Every run logs in again, which
@@ -17,6 +24,26 @@ type User struct {
 	CreatedAt     time.Time `json:"created_at" bson:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at" bson:"updated_at"`
 }
+
+const (
+	RoleAdmin = "admin"
+	RoleUser  = "user"
+)
+
+const (
+	StatusPending  = "pending"  // logged in, waiting for an admin
+	StatusActive   = "active"   // booked for on Sundays, may use every command
+	StatusDisabled = "disabled" // switched off by an admin; nothing is booked
+)
+
+// ValidStatus is whether s is one of the statuses an admin can set.
+func ValidStatus(s string) bool {
+	return s == StatusPending || s == StatusActive || s == StatusDisabled
+}
+
+func (u User) IsActive() bool { return u.Status == StatusActive }
+
+func (u User) IsAdmin() bool { return u.Role == RoleAdmin }
 
 type ClassBookingSchedule struct {
 	ID        string `json:"id" bson:"id"`                 // Unique identifier for the class booking

@@ -78,6 +78,12 @@ func TestEveryScheduleIsBookedEveryWeek(t *testing.T) {
 	loggedOut := athlete(t, 4, "logged-out@example.com", monday7)
 	loggedOut.IsAuthenticated = false
 	require.NoError(t, store.SaveUser(ctx, loggedOut))
+	pending := athlete(t, 5, "pending@example.com", monday7)
+	pending.Status = models.StatusPending
+	require.NoError(t, store.SaveUser(ctx, pending))
+	disabled := athlete(t, 6, "disabled@example.com", monday7)
+	disabled.Status = models.StatusDisabled
+	require.NoError(t, store.SaveUser(ctx, disabled))
 
 	booker := &recordingBooker{}
 	notifier := NewMockNotifier(t)
@@ -94,7 +100,7 @@ func TestEveryScheduleIsBookedEveryWeek(t *testing.T) {
 	bs.runWeek(week2)
 
 	assert.Equal(t, []string{"one@example.com", "two@example.com"}, booker.athletes(),
-		"only authenticated athletes with classes are booked")
+		"only active, authenticated athletes with classes are booked")
 	assert.Equal(t, 2, booker.calls["one@example.com"], "booked in both weeks, not just the first")
 	assert.Equal(t, 2, booker.calls["two@example.com"])
 

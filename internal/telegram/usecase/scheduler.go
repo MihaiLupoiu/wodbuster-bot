@@ -235,7 +235,7 @@ func (bs *BookingScheduler) weekAttempts(ctx context.Context, users []models.Use
 	week := opensAt.Format("2006-01-02")
 	out := map[int64][]models.BookingAttempt{}
 	for _, u := range users {
-		if !u.IsAuthenticated || len(u.ClassBookingSchedules) == 0 {
+		if !u.IsAuthenticated || !u.IsActive() || len(u.ClassBookingSchedules) == 0 {
 			continue
 		}
 		for _, c := range u.ClassBookingSchedules {

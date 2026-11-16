@@ -32,14 +32,17 @@ func NewLoginHandler(api LogInBotAPI, logInManager LogInManager) *LoginHandler {
 	}
 }
 
-func (h *LoginHandler) Handle(update tgbotapi.Update) {
+// Handle checks and saves the athlete's WodBuster login. It reports whether the
+// login was saved, so the bot can say what happens next — which depends on
+// whether the account is approved yet.
+func (h *LoginHandler) Handle(update tgbotapi.Update) bool {
 	ctx := context.Background()
 
 	args := strings.Split(update.Message.Text, " ")
 	if len(args) != 3 {
 		h.sendMessage(update.Message.Chat.ID,
 			"Please provide email and password: /login email password")
-		return
+		return false
 	}
 
 	email := utils.SanitizeInput(args[1])
@@ -49,14 +52,14 @@ func (h *LoginHandler) Handle(update tgbotapi.Update) {
 	if err := utils.ValidateEmail(email); err != nil {
 		h.sendMessage(update.Message.Chat.ID,
 			"Please provide a valid email address")
-		return
+		return false
 	}
 
 	// Validate password requirements
 	if err := utils.ValidatePassword(password); err != nil {
 		h.sendMessage(update.Message.Chat.ID,
 			fmt.Sprintf("Invalid password: %s", err.Error()))
-		return
+		return false
 	}
 
 	// if err := h.wodbuster.Login(email, password); err != nil {
@@ -75,13 +78,13 @@ func (h *LoginHandler) Handle(update tgbotapi.Update) {
 			"Login failed: "+err.Error()+"\nCheck your email and password and try again.")
 		slog.Error("login failed", "error", err, "chat_id", update.Message.Chat.ID,
 			"email", email, "took", time.Since(started).Round(time.Millisecond))
-		return
+		return false
 	}
 
 	slog.Info("login succeeded", "chat_id", update.Message.Chat.ID, "email", email,
 		"took", time.Since(started).Round(time.Millisecond))
-	h.sendMessage(update.Message.Chat.ID,
-		"Login successful! You can now use /book and /remove commands.")
+	h.sendMessage(update.Message.Chat.ID, "✅ Login successful.")
+	return true
 }
 
 func (h *LoginHandler) sendMessage(chatID int64, text string) {

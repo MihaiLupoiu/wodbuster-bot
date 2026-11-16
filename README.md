@@ -144,6 +144,23 @@ VERSION=1.0.0
 
 ## 🎯 **Usage**
 
+### Access
+
+Anyone can `/login`: the bot checks the WodBuster credentials and saves them,
+but a new account is **pending** until the admin approves it. A pending or
+disabled account can only use `/start`, `/help`, `/login` and `/status`, and
+the Sunday run books only for **active** accounts. The admin is the chat in
+`ADMIN_CHAT_ID`. The bot makes that chat an active admin at startup and tells
+it about every new login that is waiting. Users who existed before accounts
+had a status were made active on the first start with this version.
+
+### Admin Commands
+
+- `/users` - Everyone, with status and number of classes, pending first
+- `/approve chat_id` - Activate an account, or re-enable a disabled one
+- `/disable chat_id` - Switch an account off; nothing is booked for it
+- `/announcement text` - Send a plain-text message to every active user
+
 ### User Commands
 
 **Authentication:**

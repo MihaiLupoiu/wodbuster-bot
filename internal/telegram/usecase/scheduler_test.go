@@ -61,7 +61,8 @@ func storedUser(t *testing.T, chatID int64, password string) models.User {
 	t.Helper()
 	enc, err := utils.EncryptPassword(password, testKey)
 	require.NoError(t, err)
-	return models.User{ChatID: chatID, Email: "athlete@example.com", Password: enc, IsAuthenticated: true}
+	return models.User{ChatID: chatID, Email: "athlete@example.com", Password: enc, IsAuthenticated: true,
+		Role: models.RoleUser, Status: models.StatusActive}
 }
 
 // The whole point of the rework: one login per athlete, every class of theirs

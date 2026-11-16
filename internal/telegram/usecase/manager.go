@@ -24,6 +24,8 @@ var (
 	ErrInvalidBookingAttemptStatus   = errors.New("invalid booking attempt status")
 	ErrInvalidBookingAttemptErrorMsg = errors.New("invalid booking attempt error msg")
 	ErrInvalidWODBusterLogin         = errors.New("invalid WODBuster login")
+	ErrInvalidStatus                 = errors.New("invalid status")
+	ErrAdminStatus                   = errors.New("an admin's status cannot be changed")
 )
 
 // Storage defines the interface that all storage implementations must satisfy
@@ -57,6 +59,83 @@ type Manager struct {
 	encryptionKey    string
 	bookingScheduler *BookingScheduler
 	logger           *slog.Logger
+
+	// admin is the chat that is always an active admin, from ADMIN_CHAT_ID.
+	// It is how the first admin exists at all, and why the bot cannot be left
+	// with nobody able to approve anyone.
+	admin int64
+}
+
+// SetAdmin names the chat that Bootstrap and LogInAndSave make an admin.
+func (m *Manager) SetAdmin(chatID int64) { m.admin = chatID }
+
+// Bootstrap gives every user a role and a status. Users saved before those
+// fields existed were all using the bot, so they become active users; the
+// configured admin becomes an active admin. Run once at startup; it changes
+// nothing the second time.
+func (m *Manager) Bootstrap(ctx context.Context) error {
+	users, err := m.storage.ListUsers(ctx)
+	if err != nil {
+		return fmt.Errorf("could not read the users: %w", err)
+	}
+	updated := 0
+	for _, u := range users {
+		before := u
+		if u.Status == "" {
+			u.Status = models.StatusActive
+		}
+		if u.Role == "" {
+			u.Role = models.RoleUser
+		}
+		if m.admin != 0 && u.ChatID == m.admin {
+			u.Role, u.Status = models.RoleAdmin, models.StatusActive
+		}
+		if u.Role == before.Role && u.Status == before.Status {
+			continue
+		}
+		u.UpdatedAt = time.Now()
+		if err := m.storage.SaveUser(ctx, u); err != nil {
+			return fmt.Errorf("could not update chat %d: %w", u.ChatID, err)
+		}
+		m.logger.Info("user role and status set", "chat_id", u.ChatID,
+			"role", u.Role, "status", u.Status, "was_role", before.Role, "was_status", before.Status)
+		updated++
+	}
+	m.logger.Info("users bootstrapped", "users", len(users), "updated", updated)
+	return nil
+}
+
+// ListUsers is every user, for the admin's /users and /announcement.
+func (m *Manager) ListUsers(ctx context.Context) ([]models.User, error) {
+	return m.storage.ListUsers(ctx)
+}
+
+// SetUserStatus is an admin approving, disabling or re-enabling an account.
+// Admins are left alone: an admin disabling another, or themselves, is the one
+// way the bot could end up with nobody able to approve anyone.
+func (m *Manager) SetUserStatus(ctx context.Context, chatID int64, status string) (models.User, error) {
+	if !models.ValidStatus(status) {
+		return models.User{}, fmt.Errorf("%w: %q", ErrInvalidStatus, status)
+	}
+	user, ok := m.storage.GetUser(ctx, chatID)
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+	if user.IsAdmin() {
+		return user, ErrAdminStatus
+	}
+	if user.Status == status {
+		return user, nil
+	}
+	was := user.Status
+	user.Status = status
+	user.UpdatedAt = time.Now()
+	if err := m.storage.SaveUser(ctx, user); err != nil {
+		return user, err
+	}
+	m.logger.Info("user status changed", "chat_id", chatID, "email", user.Email,
+		"from", was, "to", status)
+	return user, nil
 }
 
 // NewManager creates a new manager with injected dependencies
@@ -109,9 +188,13 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 	}
 
 	now := time.Now()
+	// A newcomer's login is checked and kept, but nothing is booked for them
+	// until an admin approves the account.
 	user := models.User{
 		ChatID:                chatID,
 		ClassBookingSchedules: []models.ClassBookingSchedule{},
+		Role:                  models.RoleUser,
+		Status:                models.StatusPending,
 		CreatedAt:             now,
 	}
 	// Logging in again — a changed password, a /login to be sure — must not
@@ -119,6 +202,9 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 	// scratch and the save replaced the whole document.
 	if existing, ok := m.storage.GetUser(ctx, chatID); ok {
 		user = existing
+	}
+	if m.admin != 0 && chatID == m.admin {
+		user.Role, user.Status = models.RoleAdmin, models.StatusActive
 	}
 	user.IsAuthenticated = true
 	user.Email = email
