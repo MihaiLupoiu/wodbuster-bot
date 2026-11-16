@@ -31,6 +31,9 @@ type Metrics struct {
 	pendingBookings prom.Gauge
 	outcomes        *prom.CounterVec
 	failures        *prom.CounterVec
+
+	loginChecks          *prom.CounterVec
+	loginCheckLastPassed prom.Gauge
 }
 
 func NewMetrics(reg prom.Registerer) *Metrics {
@@ -81,6 +84,28 @@ func NewMetrics(reg prom.Registerer) *Metrics {
 			Help: "Bookings that did not happen, by reason. \"full\" is the gym being " +
 				"busy; everything else is something to fix.",
 		}, []string{"reason"}),
+
+		loginChecks: f.NewCounterVec(prom.CounterOpts{
+			Namespace: ns, Name: "login_checks_total",
+			Help: "Daily login checks, by result: passed, failed, skipped.",
+		}, []string{"result"}),
+
+		loginCheckLastPassed: f.NewGauge(prom.GaugeOpts{
+			Namespace: ns, Name: "login_check_last_success_timestamp_seconds",
+			Help: "Unix time of the last daily login check that logged in. time() minus " +
+				"this past a day and a bit means either the login is broken or the " +
+				"check is not running; both need a look before Sunday.",
+		}),
+	}
+}
+
+func (m *Metrics) observeLoginCheck(result string) {
+	if m == nil {
+		return
+	}
+	m.loginChecks.WithLabelValues(result).Inc()
+	if result == "passed" {
+		m.loginCheckLastPassed.SetToCurrentTime()
 	}
 }
 

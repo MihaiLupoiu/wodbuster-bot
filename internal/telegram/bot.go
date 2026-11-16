@@ -40,6 +40,10 @@ type Bot struct {
 	nameCheck    *nameChecker
 	rateLimiter  *utils.RateLimiter
 	stopChan     chan struct{}
+
+	// admin hears about every failed /test, /rehearse and class name check.
+	// Zero means nobody does but the athlete.
+	admin int64
 	// removeHandler *handlers.RemoveHandler
 }
 
@@ -47,6 +51,14 @@ type Bot struct {
 // exactly as before, counting nothing.
 func (b *Bot) WithMetrics(m *Metrics) *Bot {
 	b.metrics = m
+	return b
+}
+
+// WithAdmin names the chat that hears about other athletes' failed checks. On
+// 2026-11-13 an athlete's /rehearse failed exactly as Sunday's run would two
+// days later, and only that athlete saw it.
+func (b *Bot) WithAdmin(chatID int64) *Bot {
+	b.admin = chatID
 	return b
 }
 
@@ -89,8 +101,11 @@ func New(token string, manager BotManager, logger *slog.Logger) (*Bot, error) {
 		busy:     func() bool { return len(manager.GetActiveBookings()) > 0 },
 		rehearse: manager.Rehearse,
 		notify:   b.Notify,
-		log:      logger,
-		timers:   make(map[int64]*time.Timer),
+		onFail: func(chatID int64, err error) {
+			b.reportFailure(chatID, "The class name check after /book", err)
+		},
+		log:    logger,
+		timers: make(map[int64]*time.Timer),
 	}
 	return b, nil
 }
@@ -301,7 +316,12 @@ func (b *Bot) handleTestSession(update tgbotapi.Update) {
 	b.sendMessage(chatID, "🧪 Testing your session...")
 
 	if err := b.manager.TestUserSession(ctx, chatID); err != nil {
-		b.sendMessage(chatID, "❌ Session test failed: "+err.Error()+"\nPlease use /login to authenticate again.")
+		// Plain text: the error carries "login_page", and in Markdown its
+		// underscore made Telegram drop this very message on 2026-11-15.
+		b.Notify(chatID, "❌ Session test failed: "+err.Error()+
+			"\nIf you changed your WodBuster password, use /login again. Otherwise it is "+
+			"probably WodBuster's side; the admin has been told.")
+		b.reportFailure(chatID, "/test", err)
 		return
 	}
 
@@ -356,17 +376,40 @@ func (b *Bot) handleRehearse(update tgbotapi.Update) {
 
 	outcomes, err := b.manager.Rehearse(ctx, chatID)
 	if err != nil {
-		b.sendMessage(chatID, "❌ Rehearsal failed: "+err.Error())
+		b.Notify(chatID, "❌ Rehearsal failed: "+err.Error())
+		b.reportFailure(chatID, "/rehearse", err)
 		return
 	}
 
-	msg := "🧪 **Rehearsal results**\n\n"
+	// Plain text, like every message that carries error text.
+	msg := "🧪 Rehearsal results\n\n"
 	for _, o := range outcomes {
 		msg += formatOutcome(o) + "\n"
 	}
 	msg += "\nA class the box has not published yet cannot be found — that is expected " +
 		"before the opening, not a failure of your setup."
-	b.sendMessage(chatID, msg)
+	b.Notify(chatID, msg)
+}
+
+// reportFailure tells the admin that a check failed for an athlete. The admin's
+// own failures are already in front of them.
+func (b *Bot) reportFailure(chatID int64, what string, err error) {
+	if b.admin == 0 || chatID == b.admin {
+		return
+	}
+	var email string
+	if u, ok := b.manager.GetUser(context.Background(), chatID); ok {
+		email = u.Email
+	}
+	b.Notify(b.admin, failureReport(what, chatID, email, err))
+}
+
+func failureReport(what string, chatID int64, email string, err error) string {
+	who := fmt.Sprintf("chat %d", chatID)
+	if email != "" {
+		who = fmt.Sprintf("%s (chat %d)", email, chatID)
+	}
+	return fmt.Sprintf("⚠️ %s failed for %s: %v", what, who, err)
 }
 
 func formatOutcome(o booking.Outcome) string {

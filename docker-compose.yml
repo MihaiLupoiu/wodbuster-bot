@@ -68,6 +68,8 @@ services:
 
       WODBUSTER_BOX: ${WODBUSTER_BOX:-firespain}
       WODBUSTER_TIMEZONE: ${WODBUSTER_TIMEZONE:-Europe/Madrid}
+      ADMIN_CHAT_ID: ${ADMIN_CHAT_ID:-}
+      LOGIN_CHECK_CRON: ${LOGIN_CHECK_CRON:-0 10 * * *}
       # WODBUSTER_CHROME_PATH comes from the image; override only to test
       # another browser build.
 

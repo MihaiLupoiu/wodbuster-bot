@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -46,6 +47,19 @@ type BookingScheduler struct {
 	activeBookings    map[int64]*BookingContext
 	activeBookingsMux sync.RWMutex
 	isRunning         bool
+
+	// weeklyRun is the cron entry of the Sunday run, so that "next run" is
+	// that one and not the daily login check.
+	weeklyRun cron.EntryID
+
+	// admin hears about failures that the athlete alone used to hear about, or
+	// nobody did. Zero means no admin.
+	admin int64
+
+	// loginCheckSpec is when the daily login check runs, as a cron spec in
+	// the gym's zone. Empty, or no admin, turns it off.
+	loginCheckSpec string
+	loginFailing   atomic.Bool // the last login check failed
 }
 
 func NewBookingScheduler(storage Storage, booker Booker, opening Opening,
@@ -70,6 +84,16 @@ func (bs *BookingScheduler) SetMetrics(m *Metrics) { bs.metrics = m }
 // because the bot and the scheduler need each other.
 func (bs *BookingScheduler) SetNotifier(n Notifier) { bs.notifier = n }
 
+// SetAdmin names the chat that hears about failures: the daily login check,
+// and every athlete's run that goes wrong. Called once, at startup.
+func (bs *BookingScheduler) SetAdmin(chatID int64) { bs.admin = chatID }
+
+// SetLoginCheck schedules a daily login with the admin's account, so that a
+// login WodBuster has broken is found days before the opening rather than
+// during it. spec is a cron spec in the gym's zone; empty turns it off. Called
+// once, before Start.
+func (bs *BookingScheduler) SetLoginCheck(spec string) { bs.loginCheckSpec = spec }
+
 // Start schedules the weekly run, StartBefore ahead of the opening.
 func (bs *BookingScheduler) Start() error {
 	if bs.isRunning {
@@ -77,8 +101,23 @@ func (bs *BookingScheduler) Start() error {
 	}
 
 	spec := bs.opening.cronSpec()
-	if _, err := bs.cron.AddFunc(spec, bs.processAllBookings); err != nil {
+	id, err := bs.cron.AddFunc(spec, bs.processAllBookings)
+	if err != nil {
 		return fmt.Errorf("failed to schedule cronjob %q: %w", spec, err)
+	}
+	bs.weeklyRun = id
+
+	switch {
+	case bs.loginCheckSpec == "":
+		bs.logger.Info("daily login check is off")
+	case bs.admin == 0:
+		bs.logger.Warn("daily login check is off: it logs in as the admin, and there is no admin",
+			"cron", bs.loginCheckSpec)
+	default:
+		if _, err := bs.cron.AddFunc(bs.loginCheckSpec, bs.CheckLogin); err != nil {
+			return fmt.Errorf("failed to schedule the login check %q: %w", bs.loginCheckSpec, err)
+		}
+		bs.logger.Info("daily login check scheduled", "cron", bs.loginCheckSpec, "chat_id", bs.admin)
 	}
 
 	bs.cron.Start()
@@ -159,12 +198,22 @@ func (bs *BookingScheduler) runWeek(now time.Time) {
 	}
 	bs.logger.Info("booking for athletes", "athletes", len(byAthlete))
 
+	// The admin hears about the first failed login of the run straight away:
+	// one is enough to go and look, and on 2026-11-15 every one of eighteen
+	// failed the same way.
+	var alertAdmin sync.Once
+
 	var wg sync.WaitGroup
 	for chatID, attempts := range byAthlete {
 		wg.Add(1)
 		go func(chatID int64, attempts []models.BookingAttempt) {
 			defer wg.Done()
-			bs.runForAthlete(ctx, chatID, attempts, RunSettings{OpensAt: opensAt})
+			bs.runForAthlete(ctx, chatID, attempts, RunSettings{
+				OpensAt: opensAt,
+				OnLoginRetry: func(attempt, of int, err error) {
+					bs.loginTrouble(chatID, opensAt, attempt, of, err, &alertAdmin)
+				},
+			})
 		}(chatID, attempts)
 	}
 	wg.Wait()
@@ -229,6 +278,9 @@ type RunSettings struct {
 
 	// GiveUpAfter bounds the chase. Zero leaves the library's default.
 	GiveUpAfter time.Duration
+
+	// OnLoginRetry hears about each failed login that will be tried again.
+	OnLoginRetry func(attempt, of int, err error)
 }
 
 // runForAthlete books every pending class of one athlete in a single run, so
@@ -298,9 +350,10 @@ func (bs *BookingScheduler) runForAthlete(ctx context.Context, chatID int64,
 
 	outcomes, err := bs.booker.Run(runCtx, user.Email, password, targets,
 		booking.RunOptions{
-			OpensAt:     rs.OpensAt,
-			DryRun:      rs.DryRun,
-			GiveUpAfter: rs.GiveUpAfter,
+			OpensAt:      rs.OpensAt,
+			DryRun:       rs.DryRun,
+			GiveUpAfter:  rs.GiveUpAfter,
+			OnLoginRetry: rs.OnLoginRetry,
 		})
 	if err != nil {
 		if rs.DryRun {
@@ -388,7 +441,83 @@ func (bs *BookingScheduler) fail(ctx context.Context, chatID int64,
 			bs.logger.Error("could not record the failure", "booking_id", a.ID, "error", uerr)
 		}
 	}
-	bs.notify(chatID, "❌ Booking run failed: "+err.Error())
+	bs.notify(chatID, "❌ Booking run failed: "+err.Error()+
+		"\n\nNothing was booked for you this time. Book your classes by hand on WodBuster.")
+	if chatID != bs.admin {
+		bs.notifyAdmin(fmt.Sprintf("❌ Booking run failed for chat %d (%d class(es)): %v",
+			chatID, len(attempts), err))
+	}
+}
+
+// loginTrouble is a Sunday run's login failing with tries left. The athlete
+// hears about it on the first failure, while there is still time before the
+// opening to book by hand; the admin hears about the first failure of the
+// whole run.
+func (bs *BookingScheduler) loginTrouble(chatID int64, opensAt time.Time,
+	attempt, of int, err error, alertAdmin *sync.Once) {
+
+	if attempt == 1 {
+		bs.notify(chatID, fmt.Sprintf("⚠️ Logging in to WodBuster failed (try %d of %d). "+
+			"I'm still trying, but if you don't get your results by %s, book your classes by hand.",
+			attempt, of, opensAt.In(bs.opening.Location).Format("15:04")))
+	}
+	if chatID == bs.admin {
+		return
+	}
+	alertAdmin.Do(func() {
+		bs.notifyAdmin(fmt.Sprintf("⚠️ Sunday run: a login failed for chat %d (try %d of %d): %v\n"+
+			"Other athletes may follow; each one is told to book by hand if it keeps failing.",
+			chatID, attempt, of, err))
+	})
+}
+
+// CheckLogin logs in with the admin's stored credentials and books nothing.
+// It runs daily so that WodBuster changing its login under us — which it did
+// between 2026-11-08 and 2026-11-13, found only when the Sunday run failed —
+// is found with days to spare. A failure goes to the admin every day it lasts;
+// the day it works again says so once.
+func (bs *BookingScheduler) CheckLogin() {
+	if len(bs.GetActiveBookings()) > 0 {
+		bs.logger.Info("skipping the login check during a booking run")
+		bs.metrics.observeLoginCheck("skipped")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	user, ok := bs.storage.GetUser(ctx, bs.admin)
+	if !ok || user.Email == "" {
+		bs.logger.Warn("login check skipped: the admin has no WodBuster login stored",
+			"chat_id", bs.admin)
+		bs.metrics.observeLoginCheck("skipped")
+		bs.notifyAdmin("⚠️ The daily login check needs your WodBuster login. Use /login once.")
+		return
+	}
+	password, err := utils.DecryptPassword(user.Password, bs.encryptionKey)
+	if err == nil {
+		err = bs.booker.Authenticate(ctx, user.Email, password)
+	}
+	if err != nil {
+		bs.logger.Error("login check failed", "chat_id", bs.admin, "error", err)
+		bs.metrics.observeLoginCheck("failed")
+		bs.loginFailing.Store(true)
+		bs.notifyAdmin("🚨 Daily login check failed: " + err.Error() + "\n\n" +
+			"The Sunday run will fail the same way until this is fixed. " +
+			"The diagnostics volume has a screenshot of where it stopped.")
+		return
+	}
+	bs.logger.Info("login check passed", "chat_id", bs.admin)
+	bs.metrics.observeLoginCheck("passed")
+	if bs.loginFailing.Swap(false) {
+		bs.notifyAdmin("✅ Daily login check works again.")
+	}
+}
+
+func (bs *BookingScheduler) notifyAdmin(text string) {
+	if bs.admin == 0 {
+		return
+	}
+	bs.notify(bs.admin, text)
 }
 
 // recordingContext detaches from a context that may already be done, so that
@@ -485,11 +614,7 @@ func (bs *BookingScheduler) GetNextRunTime() time.Time {
 	if !bs.isRunning {
 		return time.Time{}
 	}
-	entries := bs.cron.Entries()
-	if len(entries) == 0 {
-		return time.Time{}
-	}
-	return entries[0].Next
+	return bs.cron.Entry(bs.weeklyRun).Next
 }
 
 // GetScheduleInfo is the human-readable version, for /schedule.

@@ -104,3 +104,28 @@ func TestNameCheckMessageOnlyReportsMissingClasses(t *testing.T) {
 		t.Errorf("message should say how to fix it: %q", msg)
 	}
 }
+
+// A check that cannot log in is the same failure the Sunday run would meet,
+// so it is passed on rather than only logged.
+func TestNameCheckThatCannotRunIsReported(t *testing.T) {
+	errLogin := errors.New("login failed: stuck: login_page")
+	reported := make(chan error, 1)
+	c := &nameChecker{
+		delay:    time.Millisecond,
+		busy:     func() bool { return false },
+		rehearse: func(context.Context, int64) ([]booking.Outcome, error) { return nil, errLogin },
+		notify:   func(int64, string) { t.Error("the athlete is not sent a class-name warning") },
+		onFail:   func(_ int64, err error) { reported <- err },
+		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		timers:   map[int64]*time.Timer{},
+	}
+	c.schedule(7)
+	select {
+	case err := <-reported:
+		if !errors.Is(err, errLogin) {
+			t.Errorf("reported %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the failure was not reported")
+	}
+}

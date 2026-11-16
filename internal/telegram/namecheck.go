@@ -29,6 +29,7 @@ type nameChecker struct {
 	busy     func() bool // a booking run is in progress; logins are its alone
 	rehearse func(ctx context.Context, chatID int64) ([]booking.Outcome, error)
 	notify   func(chatID int64, text string)
+	onFail   func(chatID int64, err error) // optional: a check that could not run
 	log      *slog.Logger
 
 	mu     sync.Mutex
@@ -59,6 +60,9 @@ func (c *nameChecker) run(chatID int64) {
 	outcomes, err := c.rehearse(ctx, chatID)
 	if err != nil {
 		c.log.Warn("class name check failed", "chat_id", chatID, "err", err)
+		if c.onFail != nil {
+			c.onFail(chatID, err)
+		}
 		return
 	}
 	if msg := nameCheckMessage(outcomes); msg != "" {

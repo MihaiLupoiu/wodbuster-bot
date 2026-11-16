@@ -89,6 +89,8 @@ func New(config *Config) (*App, error) {
 
 	bookingScheduler := usecase.NewBookingScheduler(store, booker, opening, config.EncryptionKey, logger)
 	bookingScheduler.SetMetrics(usecase.NewMetrics(promMetrics.Registry()))
+	bookingScheduler.SetAdmin(config.AdminChatID)
+	bookingScheduler.SetLoginCheck(config.LoginCheckCron)
 
 	manager := usecase.NewManager(
 		store,
@@ -103,7 +105,10 @@ func New(config *Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Telegram bot: %w", err)
 	}
-	bot = bot.WithMetrics(telegram.NewMetrics(promMetrics.Registry()))
+	bot = bot.WithMetrics(telegram.NewMetrics(promMetrics.Registry())).WithAdmin(config.AdminChatID)
+	if config.AdminChatID == 0 {
+		logger.Warn("no ADMIN_CHAT_ID: failures reach only the athlete, and there is no daily login check")
+	}
 
 	// Results of the Sunday run go back to the athlete who asked for them.
 	bookingScheduler.SetNotifier(bot)

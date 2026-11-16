@@ -223,6 +223,13 @@ type RunOptions struct {
 	// run that sits waiting for a date days away and dies on somebody else's
 	// timeout, which is exactly what happened on 2026-10-04.
 	MaxWait time.Duration
+
+	// OnLoginRetry, if set, hears about every failed login that is about to be
+	// tried again: attempt n of `of`, and why it failed. A run only returns
+	// once the last try is spent, which on 2026-11-15 was after the opening;
+	// this is how the people waiting hear about trouble while there is still
+	// time to book by hand.
+	OnLoginRetry func(attempt, of int, err error)
 }
 
 // defaultMaxWait is comfortably longer than any sane head start and far
@@ -254,7 +261,7 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 		"opens_at", o.OpensAt.Format(time.RFC1123))
 
 	started := time.Now()
-	sess, err := s.loginWithRetry(ctx, log, email, password)
+	sess, err := s.loginWithRetry(ctx, log, email, password, o.OnLoginRetry)
 	if err != nil {
 		return nil, fmt.Errorf("login failed: %w", err)
 	}
@@ -348,7 +355,7 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 // that way once before and worked on the next try a minute later. The run
 // starts ten minutes early precisely so there is time for that.
 func (s *Service) loginWithRetry(ctx context.Context, log *slog.Logger,
-	email, password string) (wodbuster.Session, error) {
+	email, password string, onRetry func(attempt, of int, err error)) (wodbuster.Session, error) {
 
 	var err error
 	for attempt := 1; attempt <= s.loginAttempts; attempt++ {
@@ -362,6 +369,9 @@ func (s *Service) loginWithRetry(ctx context.Context, log *slog.Logger,
 		}
 		log.Warn("login failed; trying again", "attempt", attempt,
 			"of", s.loginAttempts, "in", s.loginBackoff, "err", err)
+		if onRetry != nil {
+			onRetry(attempt, s.loginAttempts, err)
+		}
 		select {
 		case <-ctx.Done():
 			return wodbuster.Session{}, errors.Join(err, ctx.Err())
