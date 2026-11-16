@@ -35,6 +35,19 @@ import (
 
 const loginURL = "https://wodbuster.com/account/login.aspx"
 
+// pageLanguage is the language the browser asks WodBuster for. Since a deploy
+// between 2026-11-08 and 2026-11-13 the login page follows Accept-Language,
+// and a container's Chromium with no locale asks for English. Every login on
+// 2026-11-15 then sat on an English "Remember this device?" that a check for
+// the Spanish wording never recognised. Spanish is what the page served for
+// as long as this bot has existed, and what every text match here was written
+// against; the device prompt is also found by its controls, so a page in
+// another language still gets answered.
+const (
+	pageLanguage   = "es-ES"
+	acceptLanguage = "es-ES,es"
+)
+
 // headlessUserAgent replaces the one Chrome sends when it has no window, which
 // says "HeadlessChrome" and which Cloudflare — sitting in front of WodBuster —
 // answers with an interstitial the login form never arrives behind. Any
@@ -86,6 +99,13 @@ const jsDescribeClickables = `(function(){
   }
   return out;
 })()`
+
+// deviceTexts are the label words for each answer, in every language the login
+// page offers that we have seen. Lowercase.
+const (
+	deviceTextsTrust    = `["recordar este dispositivo","remember this device"]`
+	deviceTextsJustOnce = `["no recordar","do not remember"]`
+)
 
 // jsPickDevice answers the "remember this device" question. It tries the known
 // id, then the radio's value=, then the visible label — three independent ways
@@ -208,21 +228,32 @@ func (e *StuckError) Error() string {
 // cf is true when the page carries any of Cloudflare's challenge markers: the
 // Turnstile widget or its iframe, the challenge-platform script, or the
 // interstitial's wording.
+//
+// device is true when the "remember this device" question is on the page. It is
+// found by its radios first — their value= is the control's name and does not
+// change with the language — and by its wording only as a fallback.
 const jsPageState = `(function(){
   var body = (document.body ? document.body.innerText : '').slice(0,4000).toLowerCase();
   var title = document.title || '';
+  var device = !!document.querySelector(
+      'input[type=radio][value="CtlSeguro"], input[type=radio][value="CtlNoSeguro"], ' +
+      '#body_body_CtlConfiar_CtlSeguro, #body_body_CtlConfiar_CtlNoSeguro') ||
+    /recordar este dispositivo|remember this device/.test(body);
+  var lang = (document.documentElement && document.documentElement.lang) || '';
   var cf = !!document.querySelector(
       'iframe[src*="challenges.cloudflare.com"], .cf-turnstile, [name="cf-turnstile-response"], ' +
       'script[src*="/cdn-cgi/challenge-platform"], #challenge-form, #cf-challenge-running') ||
     /just a moment|verify you are human|checking your browser|verifica que eres humano/i
       .test(title + ' ' + body.slice(0,500));
-  return {body: body, title: title, cf: cf};
+  return {body: body, title: title, cf: cf, device: device, lang: lang};
 })()`
 
 type pageState struct {
-	Body  string `json:"body"`
-	Title string `json:"title"`
-	CF    bool   `json:"cf"`
+	Body   string `json:"body"`
+	Title  string `json:"title"`
+	CF     bool   `json:"cf"`
+	Device bool   `json:"device"` // the "remember this device" question is showing
+	Lang   string `json:"lang"`   // <html lang>, to tell a language switch apart in the logs
 }
 
 // roadToBoxGrace is how long the login waits on roadtobox.aspx for WodBuster to
@@ -311,6 +342,27 @@ type io_discard struct{}
 
 func (io_discard) Write(p []byte) (int, error) { return len(p), nil }
 
+// allocatorOptions is how the browser is started: a separate method so that a
+// test can start the same browser against a local page.
+func (a *Authenticator) allocatorOptions() []chromedp.ExecAllocatorOption {
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", a.headless),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.WindowSize(1280, 900),
+		chromedp.Flag("lang", pageLanguage),
+		chromedp.Flag("accept-lang", acceptLanguage),
+	)
+	if a.headless {
+		opts = append(opts, chromedp.UserAgent(a.userAgent))
+	}
+	if a.chromePath != "" {
+		opts = append(opts, chromedp.ExecPath(a.chromePath))
+	}
+	return opts
+}
+
 // Authenticate logs in and returns a Session. The browser is closed before it
 // returns.
 func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credentials) (wodbuster.Session, error) {
@@ -322,21 +374,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 		return zero, fmt.Errorf("browserauth: email and password are required")
 	}
 
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.Flag("headless", a.headless),
-		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("no-sandbox", true),
-		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.WindowSize(1280, 900),
-	)
-	if a.headless {
-		opts = append(opts, chromedp.UserAgent(a.userAgent))
-	}
-	if a.chromePath != "" {
-		opts = append(opts, chromedp.ExecPath(a.chromePath))
-	}
-
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, a.allocatorOptions()...)
 	defer cancelAlloc()
 	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx,
 		chromedp.WithErrorf(func(f string, v ...any) { a.log.Debug(fmt.Sprintf(f, v...)) }))
@@ -393,9 +431,9 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 		return zero, fmt.Errorf("browserauth: could not submit the login form: %w", err)
 	}
 
-	deviceID, deviceValue, deviceText := idJustOnce, valJustOnce, `["no recordar"]`
+	deviceID, deviceValue, deviceText := idJustOnce, valJustOnce, deviceTextsJustOnce
 	if a.trustDevice {
-		deviceID, deviceValue, deviceText = idTrustDevice, valTrustDevice, `["recordar este dispositivo"]`
+		deviceID, deviceValue, deviceText = idTrustDevice, valTrustDevice, deviceTextsTrust
 	}
 
 	deadline := time.Now().Add(a.timeout / 2)
@@ -414,7 +452,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 				Cookies: cookieNames(runCtx),
 			}
 			a.log.Warn("login stuck", "reason", stuck.Reason, "url", stuck.URL,
-				"title", stuck.Title, "cookies", stuck.Cookies,
+				"title", stuck.Title, "lang", page.Lang, "cookies", stuck.Cookies,
 				"cloudflare_seen", sawChallenge || page.CF)
 			return zero, stuck
 		}
@@ -453,7 +491,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, box string, cr Credent
 				break
 			}
 		}
-		if strings.Contains(body, "recordar este dispositivo") {
+		if page.Device {
 			var via string
 			_ = chromedp.Run(runCtx, chromedp.Evaluate(
 				fmt.Sprintf(jsPickDevice, deviceID, deviceValue, deviceText), &via))
@@ -586,7 +624,7 @@ func stuckReason(href string, p pageState) string {
 	switch {
 	case p.CF:
 		return StuckCloudflare
-	case strings.Contains(p.Body, "recordar este dispositivo"):
+	case p.Device:
 		return StuckDevicePrompt
 	case strings.Contains(href, "/account/roadtobox.aspx"):
 		return StuckRoadToBox
