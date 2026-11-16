@@ -98,9 +98,7 @@ func (b *Bot) afterLogin(ctx context.Context, chatID int64, username string) {
 		b.Notify(chatID, "⛔ Your account is disabled, so nothing will be booked. Ask the admin to enable it.")
 	default:
 		b.Notify(chatID, pendingMessage)
-		if b.admin != 0 && b.admin != chatID {
-			b.Notify(b.admin, signupMessage(user, username))
-		}
+		b.notifyAdmins(ctx, chatID, signupMessage(user, username))
 	}
 }
 

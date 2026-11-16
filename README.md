@@ -147,12 +147,21 @@ VERSION=1.0.0
 ### Access
 
 Anyone can `/login`: the bot checks the WodBuster credentials and saves them,
-but a new account is **pending** until the admin approves it. A pending or
+but a new account is **pending** until an admin approves it. A pending or
 disabled account can only use `/start`, `/help`, `/login` and `/status`, and
-the Sunday run books only for **active** accounts. The admin is the chat in
-`ADMIN_CHAT_ID`. The bot makes that chat an active admin at startup and tells
-it about every new login that is waiting. Users who existed before accounts
-had a status were made active on the first start with this version.
+the Sunday run books only for **active** accounts. Users who existed before
+accounts had a status were made active on the first start with this version.
+
+Admins are users whose `role` is `admin` in the `users` collection. Every
+active admin is told about new logins waiting for approval and about failed
+runs and checks. The daily login check uses the first admin's account (lowest
+chat id). With no admin, none of those messages are sent and the daily check
+does nothing. The bot never creates an admin itself; make the first one in
+Mongo, after that person has run `/login` once:
+
+```js
+db.users.updateOne({ chat_id: 6234638 }, { $set: { role: "admin", status: "active" } })
+```
 
 ### Admin Commands
 

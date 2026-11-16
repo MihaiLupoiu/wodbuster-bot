@@ -89,7 +89,6 @@ func New(config *Config) (*App, error) {
 
 	bookingScheduler := usecase.NewBookingScheduler(store, booker, opening, config.EncryptionKey, logger)
 	bookingScheduler.SetMetrics(usecase.NewMetrics(promMetrics.Registry()))
-	bookingScheduler.SetAdmin(config.AdminChatID)
 	bookingScheduler.SetLoginCheck(config.LoginCheckCron)
 
 	manager := usecase.NewManager(
@@ -99,7 +98,6 @@ func New(config *Config) (*App, error) {
 		bookingScheduler,
 		logger,
 	)
-	manager.SetAdmin(config.AdminChatID)
 
 	// Before anything reads a status: a user saved before statuses existed
 	// has none, and the run books only active users. Failing here, and
@@ -115,10 +113,7 @@ func New(config *Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Telegram bot: %w", err)
 	}
-	bot = bot.WithMetrics(telegram.NewMetrics(promMetrics.Registry())).WithAdmin(config.AdminChatID)
-	if config.AdminChatID == 0 {
-		logger.Warn("no ADMIN_CHAT_ID: failures reach only the athlete, and there is no daily login check")
-	}
+	bot = bot.WithMetrics(telegram.NewMetrics(promMetrics.Registry()))
 
 	// Results of the Sunday run go back to the athlete who asked for them.
 	bookingScheduler.SetNotifier(bot)

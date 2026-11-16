@@ -59,20 +59,12 @@ type Manager struct {
 	encryptionKey    string
 	bookingScheduler *BookingScheduler
 	logger           *slog.Logger
-
-	// admin is the chat that is always an active admin, from ADMIN_CHAT_ID.
-	// It is how the first admin exists at all, and why the bot cannot be left
-	// with nobody able to approve anyone.
-	admin int64
 }
 
-// SetAdmin names the chat that Bootstrap and LogInAndSave make an admin.
-func (m *Manager) SetAdmin(chatID int64) { m.admin = chatID }
-
 // Bootstrap gives every user a role and a status. Users saved before those
-// fields existed were all using the bot, so they become active users; the
-// configured admin becomes an active admin. Run once at startup; it changes
-// nothing the second time.
+// fields existed were all using the bot, so they become active users. Admins
+// are made in the database, by setting role to "admin"; nothing here creates
+// one. Run once at startup; it changes nothing the second time.
 func (m *Manager) Bootstrap(ctx context.Context) error {
 	users, err := m.storage.ListUsers(ctx)
 	if err != nil {
@@ -87,9 +79,6 @@ func (m *Manager) Bootstrap(ctx context.Context) error {
 		if u.Role == "" {
 			u.Role = models.RoleUser
 		}
-		if m.admin != 0 && u.ChatID == m.admin {
-			u.Role, u.Status = models.RoleAdmin, models.StatusActive
-		}
 		if u.Role == before.Role && u.Status == before.Status {
 			continue
 		}
@@ -101,7 +90,8 @@ func (m *Manager) Bootstrap(ctx context.Context) error {
 			"role", u.Role, "status", u.Status, "was_role", before.Role, "was_status", before.Status)
 		updated++
 	}
-	m.logger.Info("users bootstrapped", "users", len(users), "updated", updated)
+	m.logger.Info("users bootstrapped", "users", len(users), "updated", updated,
+		"admins", len(models.ActiveAdmins(users)))
 	return nil
 }
 
@@ -202,9 +192,6 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 	// scratch and the save replaced the whole document.
 	if existing, ok := m.storage.GetUser(ctx, chatID); ok {
 		user = existing
-	}
-	if m.admin != 0 && chatID == m.admin {
-		user.Role, user.Status = models.RoleAdmin, models.StatusActive
 	}
 	user.IsAuthenticated = true
 	user.Email = email

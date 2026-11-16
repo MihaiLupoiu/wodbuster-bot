@@ -17,7 +17,6 @@ func TestANewcomerIsSavedAsPending(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStorage()
 	m := managerWith(t, store)
-	m.SetAdmin(1)
 
 	require.NoError(t, m.LogInAndSave(ctx, 7, "athlete@example.com", "new-password"))
 
@@ -45,21 +44,9 @@ func TestLoggingInAgainKeepsRoleAndStatus(t *testing.T) {
 	}
 }
 
-func TestTheConfiguredAdminIsActiveFromTheirFirstLogin(t *testing.T) {
-	ctx := context.Background()
-	store := storage.NewMemoryStorage()
-	m := managerWith(t, store)
-	m.SetAdmin(7)
-
-	require.NoError(t, m.LogInAndSave(ctx, 7, "athlete@example.com", "new-password"))
-
-	got, _ := store.GetUser(ctx, 7)
-	assert.Equal(t, models.RoleAdmin, got.Role)
-	assert.Equal(t, models.StatusActive, got.Status)
-}
-
-// Everyone was using the bot before roles existed, so they stay in; the
-// admin from the config becomes the admin. Running it twice changes nothing.
+// Everyone was using the bot before roles existed, so they stay in, as users;
+// an admin set in the database stays an admin. Running it twice changes
+// nothing.
 func TestBootstrapMakesExistingUsersActive(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStorage()
@@ -72,17 +59,22 @@ func TestBootstrapMakesExistingUsersActive(t *testing.T) {
 	pending.Status = models.StatusPending
 	require.NoError(t, store.SaveUser(ctx, pending))
 
+	madeAdmin := storedUser(t, 4, "pw")
+	madeAdmin.Role, madeAdmin.Status = models.RoleAdmin, ""
+	require.NoError(t, store.SaveUser(ctx, madeAdmin))
+
 	m := managerWith(t, store)
-	m.SetAdmin(1)
 	require.NoError(t, m.Bootstrap(ctx))
 	require.NoError(t, m.Bootstrap(ctx))
 
-	admin, _ := store.GetUser(ctx, 1)
+	for _, id := range []int64{1, 2} {
+		u, _ := store.GetUser(ctx, id)
+		assert.Equal(t, models.RoleUser, u.Role, "nobody becomes an admin by themselves")
+		assert.Equal(t, models.StatusActive, u.Status)
+	}
+	admin, _ := store.GetUser(ctx, 4)
 	assert.Equal(t, models.RoleAdmin, admin.Role)
 	assert.Equal(t, models.StatusActive, admin.Status)
-	user, _ := store.GetUser(ctx, 2)
-	assert.Equal(t, models.RoleUser, user.Role)
-	assert.Equal(t, models.StatusActive, user.Status)
 	stillPending, _ := store.GetUser(ctx, 3)
 	assert.Equal(t, models.StatusPending, stillPending.Status, "a status already set is kept")
 }

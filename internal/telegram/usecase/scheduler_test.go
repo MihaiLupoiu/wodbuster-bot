@@ -50,6 +50,8 @@ func TestOpeningNextIsInTheGymsZone(t *testing.T) {
 func schedulerFor(t *testing.T, booker Booker) (*BookingScheduler, *MockStorage, *MockNotifier) {
 	t.Helper()
 	store := NewMockStorage(t)
+	// A failure looks for admins to tell; these tests have none.
+	store.EXPECT().ListUsers(mock.Anything).Return(nil, nil).Maybe()
 	notifier := NewMockNotifier(t)
 	bs := NewBookingScheduler(store, booker, DefaultOpening(madrid(t)), testKey,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))

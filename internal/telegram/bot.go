@@ -42,10 +42,6 @@ type Bot struct {
 	nameCheck    *nameChecker
 	rateLimiter  *utils.RateLimiter
 	stopChan     chan struct{}
-
-	// admin hears about every failed /test, /rehearse and class name check.
-	// Zero means nobody does but the athlete.
-	admin int64
 	// removeHandler *handlers.RemoveHandler
 }
 
@@ -53,14 +49,6 @@ type Bot struct {
 // exactly as before, counting nothing.
 func (b *Bot) WithMetrics(m *Metrics) *Bot {
 	b.metrics = m
-	return b
-}
-
-// WithAdmin names the chat that hears about other athletes' failed checks. On
-// 2026-11-13 an athlete's /rehearse failed exactly as Sunday's run would two
-// days later, and only that athlete saw it.
-func (b *Bot) WithAdmin(chatID int64) *Bot {
-	b.admin = chatID
 	return b
 }
 
@@ -415,17 +403,30 @@ func (b *Bot) handleRehearse(update tgbotapi.Update) {
 	b.Notify(chatID, msg)
 }
 
-// reportFailure tells the admin that a check failed for an athlete. The admin's
-// own failures are already in front of them.
+// reportFailure tells the admins that a check failed for an athlete. On
+// 2026-11-13 an athlete's /rehearse failed exactly as Sunday's run would two
+// days later, and only that athlete saw it.
 func (b *Bot) reportFailure(chatID int64, what string, err error) {
-	if b.admin == 0 || chatID == b.admin {
-		return
-	}
 	var email string
 	if u, ok := b.manager.GetUser(context.Background(), chatID); ok {
 		email = u.Email
 	}
-	b.Notify(b.admin, failureReport(what, chatID, email, err))
+	b.notifyAdmins(context.Background(), chatID, failureReport(what, chatID, email, err))
+}
+
+// notifyAdmins tells every active admin, except the one it is about: that
+// admin already has it in front of them. No admin, no message.
+func (b *Bot) notifyAdmins(ctx context.Context, except int64, text string) {
+	users, err := b.manager.ListUsers(ctx)
+	if err != nil {
+		b.logger.Error("could not find the admins to tell", "err", err)
+		return
+	}
+	for _, a := range models.ActiveAdmins(users) {
+		if a.ChatID != except {
+			b.Notify(a.ChatID, text)
+		}
+	}
 }
 
 func failureReport(what string, chatID int64, email string, err error) string {

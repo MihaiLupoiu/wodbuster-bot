@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 type User struct {
 	ChatID                int64                  `json:"chat_id" bson:"chat_id"`
@@ -44,6 +47,20 @@ func ValidStatus(s string) bool {
 func (u User) IsActive() bool { return u.Status == StatusActive }
 
 func (u User) IsAdmin() bool { return u.Role == RoleAdmin }
+
+// ActiveAdmins are the users who hear about failures and new logins, in chat
+// order so that "the first admin" is the same one every time. None is a valid
+// answer: then nobody is told.
+func ActiveAdmins(users []User) []User {
+	var out []User
+	for _, u := range users {
+		if u.IsAdmin() && u.IsActive() {
+			out = append(out, u)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ChatID < out[j].ChatID })
+	return out
+}
 
 type ClassBookingSchedule struct {
 	ID        string `json:"id" bson:"id"`                 // Unique identifier for the class booking

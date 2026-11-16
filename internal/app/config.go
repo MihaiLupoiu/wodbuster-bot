@@ -40,15 +40,9 @@ type Config struct {
 	// this long after the previous one finished. Zero lets them run together.
 	LoginGap time.Duration `envconfig:"WODBUSTER_LOGIN_GAP" default:"20s"`
 
-	// AdminChatID is the Telegram chat of whoever runs the bot. It hears about
-	// every athlete's failed run, /test, /rehearse and class name check, and
-	// its own stored login is the one the daily login check uses. 0 turns all
-	// of that off. Send /status to the bot and read chat_id in the logs to find
-	// yours.
-	AdminChatID int64 `envconfig:"ADMIN_CHAT_ID"`
-
-	// LoginCheckCron is when the daily login check runs, in the gym's zone.
-	// Empty turns it off; it is also off without an admin.
+	// LoginCheckCron is when the daily login check runs, in the gym's zone. It
+	// logs in with the first active admin's account. Empty turns it off; with
+	// no admin it does nothing.
 	LoginCheckCron string `envconfig:"LOGIN_CHECK_CRON" default:"0 10 * * *"`
 
 	// MongoDB configuration
