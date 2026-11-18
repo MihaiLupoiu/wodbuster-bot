@@ -607,13 +607,21 @@ func toHTTPCookies(jar []*network.Cookie, box string) []*http.Cookie {
 			continue
 		}
 		seen[key] = true
-		out = append(out, &http.Cookie{
+		hc := &http.Cookie{
 			Name:     c.Name,
 			Value:    c.Value,
 			Path:     c.Path,
 			Secure:   c.Secure,
 			HttpOnly: c.HTTPOnly,
-		})
+		}
+		// Keep the expiry, so a stored session knows when it runs out.
+		// Domain stays out: wodbuster.NewClient sets every cookie on both
+		// the box and wodbuster.com, and Chrome reports host-only cookies
+		// with a bare domain the jar would refuse on the other host.
+		if !c.Session && c.Expires > 0 {
+			hc.Expires = time.Unix(int64(c.Expires), 0).UTC()
+		}
+		out = append(out, hc)
 	}
 	return out
 }

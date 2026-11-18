@@ -85,11 +85,17 @@ func New(config *Config) (*App, error) {
 		booking.WithChromePath(config.ChromePath),
 		booking.WithDiagnosticsDir(config.DiagnosticsDir),
 		booking.WithLoginGap(config.LoginGap),
+		booking.WithTrustDevice(config.TrustDevice),
 		booking.WithMetrics(booking.NewMetrics(promMetrics.Registry())))
 
 	bookingScheduler := usecase.NewBookingScheduler(store, booker, opening, config.EncryptionKey, logger)
 	bookingScheduler.SetMetrics(usecase.NewMetrics(promMetrics.Registry()))
 	bookingScheduler.SetLoginCheck(config.LoginCheckCron)
+	bookingScheduler.SetSessionRefresh(config.SessionRefreshCron)
+	if err := usecase.ValidReuseMode(config.SessionReuse); err != nil {
+		return nil, err
+	}
+	bookingScheduler.SetSessionPreflight(config.SessionPreflightCron, config.SessionReuse)
 
 	manager := usecase.NewManager(
 		store,

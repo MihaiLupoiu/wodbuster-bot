@@ -19,10 +19,10 @@ type User struct {
 	Role   string `json:"role" bson:"role"`
 	Status string `json:"status" bson:"status"`
 
-	// No session is stored. A WodBuster session is a session cookie with no
-	// expiry of its own, dropped by the server after a while idle, so one
-	// saved on Monday is worthless by Sunday. Every run logs in again, which
-	// is why the (encrypted) password is what gets kept.
+	// The WodBuster session is not kept here but in the sessions collection
+	// (StoredSession), refreshed every 12 hours. The (encrypted) password is
+	// still kept: the browser login is the fallback whenever a stored session
+	// stops working.
 	LastLoginTime time.Time `json:"last_login_time,omitempty" bson:"last_login_time,omitempty"`
 	CreatedAt     time.Time `json:"created_at" bson:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at" bson:"updated_at"`

@@ -69,6 +69,14 @@ services:
       WODBUSTER_BOX: ${WODBUSTER_BOX:-firespain}
       WODBUSTER_TIMEZONE: ${WODBUSTER_TIMEZONE:-Europe/Madrid}
       LOGIN_CHECK_CRON: ${LOGIN_CHECK_CRON:-0 10 * * *}
+      # Stored sessions (see README, "How the weekly run works"). Log in with
+      # "remember this device"; refresh every 12h; log everyone in at 11:00 on
+      # Sunday. SESSION_REUSE: off (as before) or shadow. The two crons use
+      # "-" not ":-" on purpose: set one to empty in .env to turn it off.
+      WODBUSTER_TRUST_DEVICE: ${WODBUSTER_TRUST_DEVICE:-true}
+      SESSION_REFRESH_CRON: ${SESSION_REFRESH_CRON-0 3,15 * * *}
+      SESSION_PREFLIGHT_CRON: ${SESSION_PREFLIGHT_CRON-0 11 * * 0}
+      SESSION_REUSE: ${SESSION_REUSE:-shadow}
       # WODBUSTER_CHROME_PATH comes from the image; override only to test
       # another browser build.
 

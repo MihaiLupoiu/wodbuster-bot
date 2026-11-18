@@ -77,6 +77,13 @@ type Server struct {
 	// ExpireSession makes every handler answer with the login page.
 	expireSession bool
 
+	// challenge makes every handler answer with a Cloudflare challenge page.
+	challenge bool
+
+	// setCookies are sent in the Set-Cookie of every LoadClass answer, the
+	// way WodBuster renews .WBAuth on an ordinary schedule read.
+	setCookies []*http.Cookie
+
 	// ServerSkew shifts the Date header, to test clock synchronisation.
 	serverSkew time.Duration
 
@@ -244,6 +251,22 @@ func (s *Server) ExpireSession(v bool) {
 	s.expireSession = v
 }
 
+// Challenge makes every handler answer the way Cloudflare does when it steps
+// in: a 403 marked cf-mitigated, with the "Just a moment..." page.
+func (s *Server) Challenge(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.challenge = v
+}
+
+// RenewCookies makes every schedule read set these cookies, as WodBuster does
+// when it renews .WBAuth. No arguments stops it.
+func (s *Server) RenewCookies(cookies ...*http.Cookie) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.setCookies = cookies
+}
+
 // SetSkew makes the server's Date header differ from the local clock.
 func (s *Server) SetSkew(d time.Duration) {
 	s.mu.Lock()
@@ -310,6 +333,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	skew := s.serverSkew
 	expired := s.expireSession
+	challenge := s.challenge
+	setCookies := s.setCookies
 	s.mu.Unlock()
 
 	w.Header().Set("Date", time.Now().Add(skew).UTC().Format(http.TimeFormat))
@@ -341,6 +366,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(delay)
 	}
 
+	if challenge {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cf-Mitigated", "challenge")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title></head>`+
+			`<body>Checking your browser</body></html>`)
+		return
+	}
 	if expired {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -351,6 +384,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch handler {
 	case "LoadClass":
+		for _, c := range setCookies {
+			http.SetCookie(w, c)
+		}
 		s.serveDay(w, ticks)
 	case "Calendario_Inscribir", "Calendario_Avisar", "Calendario_Borrar":
 		s.serveAction(w, handler, id, q.Get("idu"))

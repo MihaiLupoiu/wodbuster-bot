@@ -53,7 +53,7 @@ func TestFormatUsersPutsPendingFirst(t *testing.T) {
 		{ChatID: 2, Email: "off@example.com", Role: models.RoleUser, Status: models.StatusDisabled},
 		{ChatID: 3, Email: "new@example.com", Role: models.RoleUser, Status: models.StatusPending},
 	}
-	got := formatUsers(users)
+	got := formatUsers(users, map[int64]bool{1: true})
 	lines := strings.Split(got, "\n")
 	assert.Equal(t, "👥 Users (3)", lines[0])
 	assert.Equal(t, "⏳ new@example.com · chat 3 · 0 class(es)", lines[2])

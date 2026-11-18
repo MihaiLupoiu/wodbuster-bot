@@ -40,10 +40,31 @@ type Config struct {
 	// this long after the previous one finished. Zero lets them run together.
 	LoginGap time.Duration `envconfig:"WODBUSTER_LOGIN_GAP" default:"20s"`
 
+	// TrustDevice makes logins answer "remember this device", so the session
+	// cookie gets a 45-day sliding expiry and a stored session lasts. False
+	// turns it off without a release.
+	TrustDevice bool `envconfig:"WODBUSTER_TRUST_DEVICE" default:"true"`
+
 	// LoginCheckCron is when the daily login check runs, in the gym's zone. It
 	// logs in with the first active admin's account. Empty turns it off; with
 	// no admin it does nothing.
 	LoginCheckCron string `envconfig:"LOGIN_CHECK_CRON" default:"0 10 * * *"`
+
+	// SessionRefreshCron is when stored WodBuster sessions are checked and
+	// renewed, in the gym's zone. Every 12 hours keeps each one inside the
+	// 16 idle hours a session has been seen to survive; 03:00 and 15:00 stay
+	// clear of Sunday's run. Empty turns it off.
+	SessionRefreshCron string `envconfig:"SESSION_REFRESH_CRON" default:"0 3,15 * * *"`
+
+	// SessionPreflightCron is when the Sunday preflight logs everyone in, an
+	// hour before the opening, so a broken login is found with time to react.
+	// Empty turns it off.
+	SessionPreflightCron string `envconfig:"SESSION_PREFLIGHT_CRON" default:"0 11 * * 0"`
+
+	// SessionReuse is off (log in at 11:50 as before, no preflight) or shadow
+	// (log in at 11:00, book with that session, and only check the days-old
+	// stored one). live is phase 2 and refused until it is built.
+	SessionReuse string `envconfig:"SESSION_REUSE" default:"shadow"`
 
 	// MongoDB configuration
 	MongoURI    string `envconfig:"MONGO_URI" default:"mongodb://localhost:27017"`

@@ -30,6 +30,7 @@ type BotManager interface {
 	Rehearse(ctx context.Context, chatID int64) ([]booking.Outcome, error)
 	ListUsers(ctx context.Context) ([]models.User, error)
 	SetUserStatus(ctx context.Context, chatID int64, status string) (models.User, error)
+	GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error)
 }
 
 type Bot struct {
@@ -268,9 +269,15 @@ func (b *Bot) handleStatus(update tgbotapi.Update) {
 
 	scheduleCount := len(user.ClassBookingSchedules)
 
+	st, hasSession, err := b.manager.GetSession(ctx, chatID)
+	if err != nil {
+		b.logger.Error("could not read the stored session", "chat_id", chatID, "err", err)
+	}
+
 	message := "📊 **Your Status**\n\n" +
 		"Account: " + statusLine(user) + "\n" +
 		"Authentication: " + status + "\n" +
+		"WodBuster session: " + sessionLine(st, hasSession, err, time.Now()) + "\n" +
 		"Email: " + user.Email + "\n" +
 		"Scheduled Classes: " + fmt.Sprintf("%d", scheduleCount) + "\n\n"
 

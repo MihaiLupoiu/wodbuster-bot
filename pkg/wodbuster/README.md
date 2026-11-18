@@ -54,7 +54,13 @@ tests do not need Chrome installed.
 **Every method is one HTTP request.** No retries, no sleeps, no polling, no
 re-authentication. That is policy, and policy needs credentials, storage and
 rate limits that belong to the consumer. When a session dies the client returns
-`ErrSessionExpired` and stops.
+`ErrSessionExpired` and stops. A Cloudflare challenge is `ErrChallenge` instead:
+it says nothing about the session, so don't throw the session away for it.
+
+**Renewed cookies are kept.** WodBuster renews `.WBAuth` in the `Set-Cookie` of
+ordinary requests. `Client.Session()` returns the session with those renewals,
+and `Session.AuthExpiry()` says when the login cookie runs out, so a caller that
+stores sessions can save the latest one.
 
 **Errors are typed.** `errors.Is(err, wodbuster.ErrClassFull)` — retry that one.
 `ErrQuotaExceeded` and `ErrNotIncluded` — do not, no speed will help. Anything
