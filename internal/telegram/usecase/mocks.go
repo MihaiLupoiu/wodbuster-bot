@@ -6,10 +6,10 @@ package usecase
 
 import (
 	"context"
-	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
+	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
 	mock "github.com/stretchr/testify/mock"
 )
 
