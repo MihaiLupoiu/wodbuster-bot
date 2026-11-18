@@ -56,6 +56,12 @@ type BookingScheduler struct {
 	// the gym's zone. Empty turns it off.
 	loginCheckSpec string
 	loginFailing   atomic.Bool // the last login check failed
+
+	// sessionRefreshSpec is when stored sessions are checked and renewed, as
+	// a cron spec in the gym's zone. Empty turns it off. refreshGap spaces
+	// the athletes' checks apart.
+	sessionRefreshSpec string
+	refreshGap         time.Duration
 }
 
 func NewBookingScheduler(storage Storage, booker Booker, opening Opening,
@@ -69,6 +75,7 @@ func NewBookingScheduler(storage Storage, booker Booker, opening Opening,
 		logger:         logger,
 		cron:           cron.New(cron.WithLocation(opening.Location)),
 		activeBookings: make(map[int64]*BookingContext),
+		refreshGap:     defaultRefreshGap,
 	}
 }
 
@@ -106,6 +113,15 @@ func (bs *BookingScheduler) Start() error {
 			return fmt.Errorf("failed to schedule the login check %q: %w", bs.loginCheckSpec, err)
 		}
 		bs.logger.Info("daily login check scheduled", "cron", bs.loginCheckSpec)
+	}
+
+	if bs.sessionRefreshSpec == "" {
+		bs.logger.Info("session refresh is off")
+	} else {
+		if _, err := bs.cron.AddFunc(bs.sessionRefreshSpec, bs.RefreshSessions); err != nil {
+			return fmt.Errorf("failed to schedule the session refresh %q: %w", bs.sessionRefreshSpec, err)
+		}
+		bs.logger.Info("session refresh scheduled", "cron", bs.sessionRefreshSpec)
 	}
 
 	bs.cron.Start()

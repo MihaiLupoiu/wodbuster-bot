@@ -50,6 +50,12 @@ type Config struct {
 	// no admin it does nothing.
 	LoginCheckCron string `envconfig:"LOGIN_CHECK_CRON" default:"0 10 * * *"`
 
+	// SessionRefreshCron is when stored WodBuster sessions are checked and
+	// renewed, in the gym's zone. Every 12 hours keeps each one inside the
+	// 16 idle hours a session has been seen to survive; 03:00 and 15:00 stay
+	// clear of Sunday's run. Empty turns it off.
+	SessionRefreshCron string `envconfig:"SESSION_REFRESH_CRON" default:"0 3,15 * * *"`
+
 	// MongoDB configuration
 	MongoURI    string `envconfig:"MONGO_URI" default:"mongodb://localhost:27017"`
 	MongoDB     string `envconfig:"MONGO_DB" default:"wodbuster"`

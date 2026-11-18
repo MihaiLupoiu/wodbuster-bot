@@ -91,6 +91,7 @@ func New(config *Config) (*App, error) {
 	bookingScheduler := usecase.NewBookingScheduler(store, booker, opening, config.EncryptionKey, logger)
 	bookingScheduler.SetMetrics(usecase.NewMetrics(promMetrics.Registry()))
 	bookingScheduler.SetLoginCheck(config.LoginCheckCron)
+	bookingScheduler.SetSessionRefresh(config.SessionRefreshCron)
 
 	manager := usecase.NewManager(
 		store,

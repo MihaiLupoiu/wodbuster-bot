@@ -55,6 +55,15 @@ type Storage interface {
 // session stops working.
 type Booker interface {
 	Authenticate(ctx context.Context, email, password string) (wodbuster.Session, error)
+	// Login logs in the way a run does: retries, the login gate, onRetry
+	// hearing about each failure that will be tried again.
+	Login(ctx context.Context, email, password string,
+		onRetry func(attempt, of int, err error)) (wodbuster.Session, error)
+	// CheckSession asks WodBuster whether it still accepts sess, with one
+	// schedule read, and returns the session as renewed by the server.
+	// wodbuster.ErrSessionExpired means refused; ErrChallenge and other
+	// errors mean nothing was learned.
+	CheckSession(ctx context.Context, sess wodbuster.Session) (wodbuster.Session, error)
 	Run(ctx context.Context, email, password string, targets []booking.Target,
 		o booking.RunOptions) ([]booking.Outcome, error)
 }

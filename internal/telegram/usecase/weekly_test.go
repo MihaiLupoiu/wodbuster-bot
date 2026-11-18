@@ -30,6 +30,15 @@ func (b *recordingBooker) Authenticate(context.Context, string, string) (wodbust
 	return wodbuster.Session{}, nil
 }
 
+func (b *recordingBooker) Login(context.Context, string, string,
+	func(int, int, error)) (wodbuster.Session, error) {
+	return wodbuster.Session{}, nil
+}
+
+func (b *recordingBooker) CheckSession(_ context.Context, s wodbuster.Session) (wodbuster.Session, error) {
+	return s, nil
+}
+
 func (b *recordingBooker) Run(_ context.Context, email, _ string, targets []booking.Target,
 	_ booking.RunOptions) ([]booking.Outcome, error) {
 
