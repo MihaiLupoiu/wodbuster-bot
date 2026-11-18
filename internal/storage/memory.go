@@ -12,6 +12,7 @@ import (
 type MemoryStorage struct {
 	users    map[int64]models.User
 	bookings map[string]models.BookingAttempt
+	sessions map[int64]models.StoredSession
 	mu       sync.RWMutex
 }
 
@@ -19,6 +20,7 @@ func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
 		users:    make(map[int64]models.User),
 		bookings: make(map[string]models.BookingAttempt),
+		sessions: make(map[int64]models.StoredSession),
 	}
 }
 
@@ -114,5 +116,30 @@ func (m *MemoryStorage) UpdateBookingStatus(ctx context.Context, attemptID strin
 	booking.UpdatedAt = time.Now()
 	m.bookings[attemptID] = booking
 
+	return nil
+}
+
+func (m *MemoryStorage) SaveSession(ctx context.Context, s models.StoredSession) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s.UpdatedAt = time.Now()
+	m.sessions[s.ChatID] = s
+	return nil
+}
+
+func (m *MemoryStorage) GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[chatID]
+	return s, ok, nil
+}
+
+func (m *MemoryStorage) DeleteSession(ctx context.Context, chatID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.sessions, chatID)
 	return nil
 }

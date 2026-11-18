@@ -39,6 +39,63 @@ func (_m *MockStorage) EXPECT() *MockStorage_Expecter {
 	return &MockStorage_Expecter{mock: &_m.Mock}
 }
 
+// DeleteSession provides a mock function for the type MockStorage
+func (_mock *MockStorage) DeleteSession(ctx context.Context, chatID int64) error {
+	ret := _mock.Called(ctx, chatID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteSession")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64) error); ok {
+		r0 = returnFunc(ctx, chatID)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockStorage_DeleteSession_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteSession'
+type MockStorage_DeleteSession_Call struct {
+	*mock.Call
+}
+
+// DeleteSession is a helper method to define mock.On call
+//   - ctx context.Context
+//   - chatID int64
+func (_e *MockStorage_Expecter) DeleteSession(ctx interface{}, chatID interface{}) *MockStorage_DeleteSession_Call {
+	return &MockStorage_DeleteSession_Call{Call: _e.mock.On("DeleteSession", ctx, chatID)}
+}
+
+func (_c *MockStorage_DeleteSession_Call) Run(run func(ctx context.Context, chatID int64)) *MockStorage_DeleteSession_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 int64
+		if args[1] != nil {
+			arg1 = args[1].(int64)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStorage_DeleteSession_Call) Return(err error) *MockStorage_DeleteSession_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockStorage_DeleteSession_Call) RunAndReturn(run func(ctx context.Context, chatID int64) error) *MockStorage_DeleteSession_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetClassBookingSchedules provides a mock function for the type MockStorage
 func (_mock *MockStorage) GetClassBookingSchedules(ctx context.Context, chatID int64) ([]models.ClassBookingSchedule, bool) {
 	ret := _mock.Called(ctx, chatID)
@@ -103,6 +160,78 @@ func (_c *MockStorage_GetClassBookingSchedules_Call) Return(classBookingSchedule
 }
 
 func (_c *MockStorage_GetClassBookingSchedules_Call) RunAndReturn(run func(ctx context.Context, chatID int64) ([]models.ClassBookingSchedule, bool)) *MockStorage_GetClassBookingSchedules_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetSession provides a mock function for the type MockStorage
+func (_mock *MockStorage) GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error) {
+	ret := _mock.Called(ctx, chatID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetSession")
+	}
+
+	var r0 models.StoredSession
+	var r1 bool
+	var r2 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64) (models.StoredSession, bool, error)); ok {
+		return returnFunc(ctx, chatID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64) models.StoredSession); ok {
+		r0 = returnFunc(ctx, chatID)
+	} else {
+		r0 = ret.Get(0).(models.StoredSession)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, int64) bool); ok {
+		r1 = returnFunc(ctx, chatID)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, int64) error); ok {
+		r2 = returnFunc(ctx, chatID)
+	} else {
+		r2 = ret.Error(2)
+	}
+	return r0, r1, r2
+}
+
+// MockStorage_GetSession_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetSession'
+type MockStorage_GetSession_Call struct {
+	*mock.Call
+}
+
+// GetSession is a helper method to define mock.On call
+//   - ctx context.Context
+//   - chatID int64
+func (_e *MockStorage_Expecter) GetSession(ctx interface{}, chatID interface{}) *MockStorage_GetSession_Call {
+	return &MockStorage_GetSession_Call{Call: _e.mock.On("GetSession", ctx, chatID)}
+}
+
+func (_c *MockStorage_GetSession_Call) Run(run func(ctx context.Context, chatID int64)) *MockStorage_GetSession_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 int64
+		if args[1] != nil {
+			arg1 = args[1].(int64)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStorage_GetSession_Call) Return(storedSession models.StoredSession, b bool, err error) *MockStorage_GetSession_Call {
+	_c.Call.Return(storedSession, b, err)
+	return _c
+}
+
+func (_c *MockStorage_GetSession_Call) RunAndReturn(run func(ctx context.Context, chatID int64) (models.StoredSession, bool, error)) *MockStorage_GetSession_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -351,6 +480,63 @@ func (_c *MockStorage_SaveClassBookingSchedule_Call) Return(err error) *MockStor
 }
 
 func (_c *MockStorage_SaveClassBookingSchedule_Call) RunAndReturn(run func(ctx context.Context, chatID int64, class models.ClassBookingSchedule) error) *MockStorage_SaveClassBookingSchedule_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SaveSession provides a mock function for the type MockStorage
+func (_mock *MockStorage) SaveSession(ctx context.Context, s models.StoredSession) error {
+	ret := _mock.Called(ctx, s)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SaveSession")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, models.StoredSession) error); ok {
+		r0 = returnFunc(ctx, s)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockStorage_SaveSession_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveSession'
+type MockStorage_SaveSession_Call struct {
+	*mock.Call
+}
+
+// SaveSession is a helper method to define mock.On call
+//   - ctx context.Context
+//   - s models.StoredSession
+func (_e *MockStorage_Expecter) SaveSession(ctx interface{}, s interface{}) *MockStorage_SaveSession_Call {
+	return &MockStorage_SaveSession_Call{Call: _e.mock.On("SaveSession", ctx, s)}
+}
+
+func (_c *MockStorage_SaveSession_Call) Run(run func(ctx context.Context, s models.StoredSession)) *MockStorage_SaveSession_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 models.StoredSession
+		if args[1] != nil {
+			arg1 = args[1].(models.StoredSession)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStorage_SaveSession_Call) Return(err error) *MockStorage_SaveSession_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockStorage_SaveSession_Call) RunAndReturn(run func(ctx context.Context, s models.StoredSession) error) *MockStorage_SaveSession_Call {
 	_c.Call.Return(run)
 	return _c
 }

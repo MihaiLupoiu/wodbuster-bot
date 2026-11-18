@@ -39,6 +39,12 @@ type Storage interface {
 	// Booking attempts are the history of each weekly run, one per class and week.
 	SaveBookingAttempt(ctx context.Context, attempt models.BookingAttempt) error
 	UpdateBookingStatus(ctx context.Context, attemptID string, status string, errorMsg string) error
+	// Sessions are each athlete's stored WodBuster login, one per chat id,
+	// kept apart from the user. GetSession's ok is false when there is none;
+	// an error means the store could not answer.
+	SaveSession(ctx context.Context, s models.StoredSession) error
+	GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error)
+	DeleteSession(ctx context.Context, chatID int64) error
 }
 
 // Booker is the bot's view of pkg/wodbuster, implemented by internal/booking.
