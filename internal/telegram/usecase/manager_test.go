@@ -12,12 +12,13 @@ import (
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/utils"
+	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
 )
 
 func managerWith(t *testing.T, store Storage) *Manager {
 	t.Helper()
 	booker := NewMockBooker(t)
-	booker.EXPECT().Authenticate(context.Background(), "athlete@example.com", "new-password").Return(nil).Maybe()
+	booker.EXPECT().Authenticate(context.Background(), "athlete@example.com", "new-password").Return(wodbuster.Session{}, nil).Maybe()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	bs := NewBookingScheduler(store, booker, DefaultOpening(madrid(t)), testKey, log)
 	return NewManager(store, booker, testKey, bs, log)

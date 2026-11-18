@@ -6,6 +6,7 @@ package usecase
 
 import (
 	"context"
+	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
@@ -695,20 +696,29 @@ func (_m *MockBooker) EXPECT() *MockBooker_Expecter {
 }
 
 // Authenticate provides a mock function for the type MockBooker
-func (_mock *MockBooker) Authenticate(ctx context.Context, email string, password string) error {
+func (_mock *MockBooker) Authenticate(ctx context.Context, email string, password string) (wodbuster.Session, error) {
 	ret := _mock.Called(ctx, email, password)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Authenticate")
 	}
 
-	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) error); ok {
+	var r0 wodbuster.Session
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (wodbuster.Session, error)); ok {
+		return returnFunc(ctx, email, password)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) wodbuster.Session); ok {
 		r0 = returnFunc(ctx, email, password)
 	} else {
-		r0 = ret.Error(0)
+		r0 = ret.Get(0).(wodbuster.Session)
 	}
-	return r0
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = returnFunc(ctx, email, password)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
 }
 
 // MockBooker_Authenticate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Authenticate'
@@ -747,12 +757,12 @@ func (_c *MockBooker_Authenticate_Call) Run(run func(ctx context.Context, email 
 	return _c
 }
 
-func (_c *MockBooker_Authenticate_Call) Return(err error) *MockBooker_Authenticate_Call {
-	_c.Call.Return(err)
+func (_c *MockBooker_Authenticate_Call) Return(session wodbuster.Session, err error) *MockBooker_Authenticate_Call {
+	_c.Call.Return(session, err)
 	return _c
 }
 
-func (_c *MockBooker_Authenticate_Call) RunAndReturn(run func(ctx context.Context, email string, password string) error) *MockBooker_Authenticate_Call {
+func (_c *MockBooker_Authenticate_Call) RunAndReturn(run func(ctx context.Context, email string, password string) (wodbuster.Session, error)) *MockBooker_Authenticate_Call {
 	_c.Call.Return(run)
 	return _c
 }

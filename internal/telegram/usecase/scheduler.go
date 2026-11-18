@@ -486,7 +486,7 @@ func (bs *BookingScheduler) CheckLogin() {
 	user := admins[0]
 	password, err := utils.DecryptPassword(user.Password, bs.encryptionKey)
 	if err == nil {
-		err = bs.booker.Authenticate(ctx, user.Email, password)
+		_, err = bs.booker.Authenticate(ctx, user.Email, password)
 	}
 	if err != nil {
 		bs.logger.Error("login check failed", "chat_id", user.ChatID, "error", err)

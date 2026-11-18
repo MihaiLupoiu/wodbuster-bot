@@ -16,6 +16,7 @@ import (
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage"
+	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
 )
 
 const adminChat = int64(1)
@@ -72,7 +73,7 @@ func TestLoginCheckWarnsTheAdminsUntilItWorksAgain(t *testing.T) {
 	sent := collect(notifier)
 
 	booker.EXPECT().Authenticate(mock.Anything, "first@example.com", "hunter2").
-		Return(errLoginStuck).Times(2)
+		Return(wodbuster.Session{}, errLoginStuck).Times(2)
 	bs.CheckLogin()
 	bs.CheckLogin()
 	require.Len(t, sent()[adminChat], 2, "every failing day is reported")
@@ -82,7 +83,7 @@ func TestLoginCheckWarnsTheAdminsUntilItWorksAgain(t *testing.T) {
 	assert.Contains(t, sent()[adminChat][0], "login_page")
 
 	booker.ExpectedCalls = nil
-	booker.EXPECT().Authenticate(mock.Anything, "first@example.com", "hunter2").Return(nil).Times(2)
+	booker.EXPECT().Authenticate(mock.Anything, "first@example.com", "hunter2").Return(wodbuster.Session{}, nil).Times(2)
 	bs.CheckLogin()
 	bs.CheckLogin()
 	require.Len(t, sent()[adminChat], 3, "recovery is reported once, and a passing day after it says nothing")

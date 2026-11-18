@@ -40,6 +40,11 @@ type Config struct {
 	// this long after the previous one finished. Zero lets them run together.
 	LoginGap time.Duration `envconfig:"WODBUSTER_LOGIN_GAP" default:"20s"`
 
+	// TrustDevice makes logins answer "remember this device", so the session
+	// cookie gets a 45-day sliding expiry and a stored session lasts. False
+	// turns it off without a release.
+	TrustDevice bool `envconfig:"WODBUSTER_TRUST_DEVICE" default:"true"`
+
 	// LoginCheckCron is when the daily login check runs, in the gym's zone. It
 	// logs in with the first active admin's account. Empty turns it off; with
 	// no admin it does nothing.

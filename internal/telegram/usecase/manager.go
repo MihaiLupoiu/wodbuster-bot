@@ -10,6 +10,7 @@ import (
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/utils"
+	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
 )
 
 var (
@@ -49,12 +50,11 @@ type Storage interface {
 
 // Booker is the bot's view of pkg/wodbuster, implemented by internal/booking.
 //
-// Authenticate answers one question — do these credentials work — and keeps
-// nothing: a WodBuster session is a session cookie, so it will not survive
-// until the opening. Every run logs in again, which is why the password is
-// stored (encrypted) and the session is not.
+// Authenticate logs in once and returns the session. The password is still
+// stored (encrypted): the browser login stays the fallback whenever a stored
+// session stops working.
 type Booker interface {
-	Authenticate(ctx context.Context, email, password string) error
+	Authenticate(ctx context.Context, email, password string) (wodbuster.Session, error)
 	Run(ctx context.Context, email, password string, targets []booking.Target,
 		o booking.RunOptions) ([]booking.Outcome, error)
 }
@@ -173,7 +173,7 @@ func (m *Manager) GetUser(ctx context.Context, chatID int64) (models.User, bool)
 func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, password string) error {
 	// A real login against the real site, so that bad credentials are caught
 	// here and not at noon on Sunday.
-	if err := m.booker.Authenticate(ctx, email, password); err != nil {
+	if _, err := m.booker.Authenticate(ctx, email, password); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidWODBusterLogin, err)
 	}
 
@@ -262,7 +262,8 @@ func (m *Manager) TestUserSession(ctx context.Context, chatID int64) error {
 	if err != nil {
 		return fmt.Errorf("could not read the stored password: %w", err)
 	}
-	return m.booker.Authenticate(ctx, user.Email, password)
+	_, err = m.booker.Authenticate(ctx, user.Email, password)
+	return err
 }
 
 // Rehearse books nothing and reports what the run would find right now.
