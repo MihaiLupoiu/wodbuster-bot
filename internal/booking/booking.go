@@ -3,8 +3,9 @@
 // It turns what the bot stores — an athlete's credentials and a list of
 // recurring classes — into a real booking run: authenticate, trust the
 // server's clock, wait for the opening, chase. The library does the work; this
-// package only translates, so that the bot never has to know about sessions,
-// class ids or race options.
+// package only translates, so that the bot never has to know about cookies,
+// class ids or race options. Sessions reach the bot only as opaque values to
+// store and hand back (Authenticate, Login, CheckSession, RunOptions.Session).
 //
 // One Service is shared by every athlete. A run is per athlete and owns its own
 // client, because a wodbuster.Client is bound to one session and serialises

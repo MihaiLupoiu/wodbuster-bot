@@ -59,6 +59,30 @@ The dependency most likely to change under us.
 | `wodbuster_bot_server_clock_offset_seconds` | Gauge | — | We book against the server's clock. A growing offset means our timing is quietly wrong. |
 | `wodbuster_bot_day_unpublished_total` | Counter | `weekday` | Distinguishes "the box has not published yet" from "the box is closed that day" — the ambiguity in `todo.md` item 7 that made Friday 9 October look like a bug. |
 
+## Tier 3b — stored sessions
+
+The browser login has been the cause of every outage so far (2026-10-14,
+2026-10-18, 2026-11-15). Stored sessions move it off the critical path, and
+these metrics are how we learn whether a stored session can be trusted: the
+probe of 2026-11-16 proved 31 hours in use and 16 hours idle, nothing longer.
+All of them live in `internal/telegram/usecase/metrics.go`.
+
+| Metric | Type | Labels | Why |
+|---|---|---|---|
+| `wodbuster_bot_session_checks_total` | Counter | `source` (refresh, preflight), `result` (ok, expired, challenge, inconclusive, unreadable) | Every check of a stored session. `expired` is WodBuster refusing it; `challenge` and `inconclusive` taught us nothing and keep the session. |
+| `wodbuster_bot_session_age_at_failure_seconds` | Histogram | `source`, `reason` | Time from the browser login to the refusal: the measured lifetime of a session. Buckets 1h to 45d. |
+| `wodbuster_bot_session_idle_at_failure_seconds` | Histogram | `source`, `reason` | Time since the session was last accepted: the idle gap it did not survive. With the refresh every 12h this should stay under 12h; a failure above that means the refresh did not run. |
+| `wodbuster_bot_session_max_age_seconds` | Gauge | — | The oldest working stored session, after each refresh. Climbing week after week is the good news: sessions really do last. |
+| `wodbuster_bot_session_auth_expiry_seconds` | Gauge | `chat_id` | Seconds until each stored `.WBAuth` expires; absent for a session cookie. Each use pushes it back to 45 days, so it should sit near 45 days. The `chat_id` label breaks the bounded-label rule on purpose: a handful of athletes, and the series is removed with the session. |
+| `wodbuster_bot_sessions_stored` | Gauge | — | Active athletes with a stored session, after the last refresh. |
+| `wodbuster_bot_session_reuse_total` | Counter | `phase` (shadow, live), `result` | The Sunday answer, one per athlete. Preflight: `would_work`, `would_fail`, `inconclusive`, `missing` for the days-old session. Run: `used` (booked with the stored session) or `fallback` (had to log in). In shadow mode `would_work` versus `would_fail` is the evidence for going live. |
+| `wodbuster_bot_preflight_total` | Counter | `result` (all_ok, partial, failed) | Sunday 11:00 preflights. `failed` with every athlete failing is 2026-11-15 again, found 50 minutes earlier. |
+
+Log lines to search for: `session refused` (with `age`, `idle`, `logged_in_at`,
+`last_used_at`, `auth_expires_at`, `trusted_device`), `shadow check`,
+`preflight done`, `lost session replaced by a new login`, and
+`session renewed` at debug. None of them carries a cookie value.
+
 ## Tier 4 — infrastructure
 
 ### MongoDB client
@@ -114,6 +138,24 @@ in this deployment:
 4. **Login failures** — any, over a 1h window.
 5. **Mongo commands failing** — `rate(mongo_operations_total{stat="failed"}[5m]) > 0`.
 6. **Telegram updates erroring** for more than a few minutes.
+7. **Stored sessions keep being refused** —
+   `increase(wodbuster_bot_session_checks_total{source="refresh",result="expired"}[25h]) >= 2`.
+   The bot already messages the admins when a refused session cannot be
+   replaced by a login; this catches sessions dying faster than expected even
+   when the re-login works. The metric has no athlete label, so it fires for two
+   refusals across everyone; the `session refused` log lines say whose.
+8. **An active athlete has no session on Saturday evening** —
+   `wodbuster_bot_sessions_stored` below the number of active athletes with
+   classes, checked Saturday 20:00. The preflight logs everyone in anyway, so
+   this is a warning, not a page.
+9. **A `.WBAuth` within 7 days of expiry** —
+   `wodbuster_bot_session_auth_expiry_seconds < 7 * 86400`. Every refresh
+   pushes it back to 45 days, so this means the refresh has stopped.
+10. **The Sunday preflight did not finish clean** —
+    `increase(wodbuster_bot_preflight_total{result!="all_ok"}[2h]) > 0`. The
+    admins get the summary in Telegram too.
+11. *(phase 2 only)* **A run fell back to the browser** —
+    `increase(wodbuster_bot_session_reuse_total{phase="live",result="fallback"}[1h]) > 0`.
 
 Alerts 1 and 2 are the ones that matter most, because they fire when the bot
 does nothing — which is the failure mode that looks exactly like success.
