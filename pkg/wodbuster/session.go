@@ -11,8 +11,9 @@ import (
 // Session is everything needed to act as one athlete: which box, who they are,
 // and the cookies that prove it.
 //
-// It is a plain serializable value. This library does not persist it, does not
-// know when it expires and never refreshes it — the consumer owns all of that.
+// It is a plain serializable value. This library does not persist it and never
+// refreshes it on its own — the consumer owns that. A Client does keep the
+// cookies the server renews, though: Client.Session returns them.
 // Treat it as a bearer credential: a stored Session is as sensitive as the
 // password that minted it.
 type Session struct {
@@ -27,6 +28,23 @@ type Session struct {
 	Cookies []*http.Cookie `json:"cookies"`
 
 	IssuedAt time.Time `json:"issued_at"`
+}
+
+// AuthCookieName is the cookie that carries the login. WodBuster renews it on
+// ordinary requests; with "remember this device" it has an expiry 45 days out,
+// moved forward on every use, and without it is a browser-session cookie.
+const AuthCookieName = ".WBAuth"
+
+// AuthExpiry is when the login cookie expires, or the zero time when it is a
+// session cookie or missing. It reads only what the cookie says; whether the
+// server still accepts the session is Client.Ping's question.
+func (s Session) AuthExpiry() time.Time {
+	for _, c := range s.Cookies {
+		if c != nil && c.Name == AuthCookieName {
+			return c.Expires
+		}
+	}
+	return time.Time{}
 }
 
 // Valid is a structural check only. It says nothing about whether the server

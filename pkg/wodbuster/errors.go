@@ -15,6 +15,11 @@ var (
 	// on its own.
 	ErrSessionExpired = errors.New("wodbuster: session expired")
 
+	// ErrChallenge means Cloudflare answered instead of WodBuster: a "Just a
+	// moment..." page or a response marked cf-mitigated. The session was not
+	// judged at all, so it must not be thrown away for this; try again later.
+	ErrChallenge = errors.New("wodbuster: blocked by a Cloudflare challenge")
+
 	// ErrBusy is WodBuster refusing because another booking by the same athlete
 	// is still in flight: "Estás usando la reserva de clases en otro sitio,
 	// espera que termine y vuelve a intentarlo". It is the one refusal that

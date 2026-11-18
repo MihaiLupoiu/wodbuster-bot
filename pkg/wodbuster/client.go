@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"time"
@@ -23,6 +22,7 @@ type Client struct {
 	http      *http.Client
 	base      string
 	session   Session
+	jar       *recordingJar
 	userAgent string
 	log       *slog.Logger
 
@@ -92,7 +92,7 @@ func NewClient(s Session, opts ...Option) (*Client, error) {
 			},
 		}
 	}
-	jar, err := cookiejar.New(nil)
+	jar, err := newRecordingJar(s.Cookies)
 	if err != nil {
 		return nil, err
 	}
@@ -107,14 +107,23 @@ func NewClient(s Session, opts ...Option) (*Client, error) {
 		http:      &hc,
 		base:      s.BaseURL(),
 		session:   s,
+		jar:       jar,
 		userAgent: cf.userAgent,
 		log:       cf.log,
 		booking:   make(chan struct{}, 1),
 	}, nil
 }
 
-// Session returns the session this client was built from.
-func (c *Client) Session() Session { return c.session }
+// Session returns the session as it stands now: the cookies this client was
+// built from, with every cookie the server has set since replacing its older
+// version. WodBuster renews .WBAuth on ordinary requests, so after a Ping the
+// returned session can outlive the one passed to NewClient. IssuedAt is left
+// alone: it stays the time of the login that minted the session.
+func (c *Client) Session() Session {
+	s := c.session
+	s.Cookies = c.jar.snapshot()
+	return s
+}
 
 // Box is the centre this client is bound to.
 func (c *Client) Box() string { return c.session.Box }
@@ -169,10 +178,30 @@ func looksLikeLogin(resp *http.Response, body []byte) bool {
 	return strings.Contains(head, "<html") && strings.Contains(head, "login")
 }
 
+// looksLikeChallenge spots a Cloudflare challenge page: the cf-mitigated header,
+// or the interstitial's title. It says nothing about the session, which may
+// well still be good.
+func looksLikeChallenge(resp *http.Response, body []byte) bool {
+	if resp == nil {
+		return false
+	}
+	if resp.Header.Get("Cf-Mitigated") != "" {
+		return true
+	}
+	head := strings.ToLower(string(body[:min(len(body), 4096)]))
+	return strings.Contains(head, "<title>just a moment") ||
+		strings.Contains(head, "<title>attention required")
+}
+
 func (c *Client) getJSON(ctx context.Context, op, path string, out any) error {
 	body, resp, err := c.get(ctx, path)
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
+	}
+	// Challenge first: Cloudflare answers 403, which looksLikeLogin would
+	// otherwise call an expired session.
+	if looksLikeChallenge(resp, body) {
+		return fmt.Errorf("%s: %w", op, ErrChallenge)
 	}
 	if looksLikeLogin(resp, body) {
 		return fmt.Errorf("%s: %w", op, ErrSessionExpired)

@@ -190,6 +190,8 @@ func failureReason(err error) string {
 		return "busy"
 	case errors.Is(err, wodbuster.ErrSessionExpired):
 		return "session_expired"
+	case errors.Is(err, wodbuster.ErrChallenge):
+		return "challenge"
 	case errors.Is(err, wodbuster.ErrClassNotFound):
 		return "class_not_found"
 	default:
