@@ -92,6 +92,10 @@ func New(config *Config) (*App, error) {
 	bookingScheduler.SetMetrics(usecase.NewMetrics(promMetrics.Registry()))
 	bookingScheduler.SetLoginCheck(config.LoginCheckCron)
 	bookingScheduler.SetSessionRefresh(config.SessionRefreshCron)
+	if err := usecase.ValidReuseMode(config.SessionReuse); err != nil {
+		return nil, err
+	}
+	bookingScheduler.SetSessionPreflight(config.SessionPreflightCron, config.SessionReuse)
 
 	manager := usecase.NewManager(
 		store,

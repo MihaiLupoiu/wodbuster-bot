@@ -27,6 +27,21 @@ type sessionBooker struct {
 	login  func(email string) (wodbuster.Session, error)
 	checks []string // athlete ids
 	logins []string // emails
+
+	// retries[email] failed attempts are reported through onRetry before
+	// login is called, the way booking.Service.Login reports them.
+	retries map[string]int
+	// runs records what each Run was given; runAccepts decides whether a
+	// stored session passed to Run works (true) or the run falls back.
+	runs       map[string]booking.RunOptions
+	runAccepts bool
+	events     []string
+}
+
+func (b *sessionBooker) event(e string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.events = append(b.events, e)
 }
 
 func (b *sessionBooker) Authenticate(context.Context, string, string) (wodbuster.Session, error) {
@@ -34,10 +49,14 @@ func (b *sessionBooker) Authenticate(context.Context, string, string) (wodbuster
 }
 
 func (b *sessionBooker) Login(_ context.Context, email, _ string,
-	_ func(int, int, error)) (wodbuster.Session, error) {
+	onRetry func(int, int, error)) (wodbuster.Session, error) {
 	b.mu.Lock()
 	b.logins = append(b.logins, email)
+	n := b.retries[email]
 	b.mu.Unlock()
+	for i := 1; i <= n && onRetry != nil; i++ {
+		onRetry(i, 3, errLoginStuck)
+	}
 	if b.login == nil {
 		return wodbuster.Session{}, errors.New("no login scripted")
 	}
@@ -51,9 +70,29 @@ func (b *sessionBooker) CheckSession(_ context.Context, s wodbuster.Session) (wo
 	return b.check(s)
 }
 
-func (b *sessionBooker) Run(context.Context, string, string, []booking.Target,
-	booking.RunOptions) ([]booking.Outcome, error) {
-	return nil, nil
+func (b *sessionBooker) Run(_ context.Context, email, _ string, targets []booking.Target,
+	o booking.RunOptions) ([]booking.Outcome, error) {
+	b.event("run " + email)
+	b.mu.Lock()
+	if b.runs == nil {
+		b.runs = map[string]booking.RunOptions{}
+	}
+	b.runs[email] = o
+	accepts := b.runAccepts
+	b.mu.Unlock()
+
+	if o.OnSession != nil {
+		if o.Session != nil && accepts {
+			o.OnSession(*o.Session, true)
+		} else {
+			o.OnSession(wbSession("run-"+email, "run-login", time.Now(), time.Now().Add(45*24*time.Hour)), false)
+		}
+	}
+	out := make([]booking.Outcome, len(targets))
+	for i := range targets {
+		out[i] = booking.Outcome{Class: "Monday 07:00 Wod", Status: "booked"}
+	}
+	return out, nil
 }
 
 func wbSession(athlete, auth string, issued, expires time.Time) wodbuster.Session {
@@ -85,7 +124,7 @@ func newRefreshFixture(t *testing.T) *refreshFixture {
 	athlete := storedUser(t, 7, "hunter2")
 	athlete.Email = "athlete@example.com"
 	bs, notifier := withAdmins(t, booker, adminUser(t, adminChat, "admin@example.com"), athlete)
-	bs.refreshGap = 0
+	bs.refreshGap, bs.refreshGapJitter, bs.refreshStartJitter = 0, 0, 0
 	m := NewMetrics(prom.NewRegistry())
 	bs.SetMetrics(m)
 
@@ -338,4 +377,21 @@ func TestSessionRefreshIsScheduled(t *testing.T) {
 	err := bad.Start()
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "session refresh"))
+}
+
+// The refresh must not hit WodBuster on a perfectly regular timer.
+func TestJitterStaysInRangeAndVaries(t *testing.T) {
+	assert.Zero(t, jitter(0))
+	seen := map[time.Duration]bool{}
+	for range 200 {
+		d := jitter(time.Minute)
+		require.GreaterOrEqual(t, d, time.Duration(0))
+		require.Less(t, d, time.Minute)
+		seen[d] = true
+	}
+	assert.Greater(t, len(seen), 100, "not the same delay every time")
+
+	bs := NewBookingScheduler(nil, nil, DefaultOpening(time.UTC), testKey, nil)
+	assert.Equal(t, 5*time.Minute, bs.refreshStartJitter, "defaults are on")
+	assert.Equal(t, 20*time.Second, bs.refreshGapJitter)
 }

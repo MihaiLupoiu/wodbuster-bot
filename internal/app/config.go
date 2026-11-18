@@ -56,6 +56,16 @@ type Config struct {
 	// clear of Sunday's run. Empty turns it off.
 	SessionRefreshCron string `envconfig:"SESSION_REFRESH_CRON" default:"0 3,15 * * *"`
 
+	// SessionPreflightCron is when the Sunday preflight logs everyone in, an
+	// hour before the opening, so a broken login is found with time to react.
+	// Empty turns it off.
+	SessionPreflightCron string `envconfig:"SESSION_PREFLIGHT_CRON" default:"0 11 * * 0"`
+
+	// SessionReuse is off (log in at 11:50 as before, no preflight) or shadow
+	// (log in at 11:00, book with that session, and only check the days-old
+	// stored one). live is phase 2 and refused until it is built.
+	SessionReuse string `envconfig:"SESSION_REUSE" default:"shadow"`
+
 	// MongoDB configuration
 	MongoURI    string `envconfig:"MONGO_URI" default:"mongodb://localhost:27017"`
 	MongoDB     string `envconfig:"MONGO_DB" default:"wodbuster"`

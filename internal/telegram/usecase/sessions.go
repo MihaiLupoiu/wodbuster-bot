@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"sort"
 	"time"
 
@@ -28,9 +29,23 @@ const (
 	checkUnreadable   = "unreadable"
 )
 
-// defaultRefreshGap spaces out the refresh's requests, so that six athletes'
-// sessions do not reach WodBuster in the same second.
-const defaultRefreshGap = 10 * time.Second
+// The refresh is spread out so it does not look like a bot on a timer: it
+// starts up to defaultRefreshStartJitter after the cron fires, and waits
+// defaultRefreshGap plus up to defaultRefreshGapJitter between athletes. Six
+// athletes take two or three minutes, at a slightly different time each day.
+const (
+	defaultRefreshGap         = 10 * time.Second
+	defaultRefreshGapJitter   = 20 * time.Second
+	defaultRefreshStartJitter = 5 * time.Minute
+)
+
+// jitter is a random duration in [0, max).
+func jitter(max time.Duration) time.Duration {
+	if max <= 0 {
+		return 0
+	}
+	return rand.N(max)
+}
 
 // sealSession turns a session into what is stored: the whole session as JSON,
 // encrypted with the password's key, plus plain metadata for /status and the
@@ -106,6 +121,14 @@ func (bs *BookingScheduler) RefreshSessions() {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
+	if !sleepCtx(ctx, jitter(bs.refreshStartJitter)) {
+		return
+	}
+	if bs.weekRunning.Load() || len(bs.GetActiveBookings()) > 0 {
+		bs.logger.Info("skipping the session refresh during a booking run")
+		return
+	}
+
 	users, err := bs.storage.ListUsers(ctx)
 	if err != nil {
 		bs.logger.Error("session refresh skipped: could not read the users", "error", err)
@@ -129,7 +152,7 @@ func (bs *BookingScheduler) RefreshSessions() {
 		if !ok {
 			continue
 		}
-		if checked > 0 && !sleepCtx(ctx, bs.refreshGap) {
+		if checked > 0 && !sleepCtx(ctx, bs.refreshGap+jitter(bs.refreshGapJitter)) {
 			break
 		}
 		checked++

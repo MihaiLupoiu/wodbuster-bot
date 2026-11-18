@@ -43,6 +43,8 @@ type Metrics struct {
 	sessionMaxAge        prom.Gauge
 	sessionAuthExpiry    *prom.GaugeVec
 	sessionsStored       prom.Gauge
+	sessionReuse         *prom.CounterVec
+	preflights           *prom.CounterVec
 }
 
 // sessionLifetimeBuckets run from an hour to the 45 days a remembered
@@ -142,6 +144,18 @@ func NewMetrics(reg prom.Registerer) *Metrics {
 			Help: "Active athletes with a stored session, after the last refresh.",
 		}),
 
+		sessionReuse: f.NewCounterVec(prom.CounterOpts{
+			Namespace: ns, Name: "session_reuse_total",
+			Help: "Sunday results for stored sessions, per athlete, by phase (shadow, live) " +
+				"and result: would_work, would_fail, inconclusive, missing (the preflight's " +
+				"shadow check), used, fallback (the run).",
+		}, []string{"phase", "result"}),
+
+		preflights: f.NewCounterVec(prom.CounterOpts{
+			Namespace: ns, Name: "preflight_total",
+			Help: "Sunday session preflights, by result: all_ok, partial, failed.",
+		}, []string{"result"}),
+
 		loginCheckLastPassed: f.NewGauge(prom.GaugeOpts{
 			Namespace: ns, Name: "login_check_last_success_timestamp_seconds",
 			Help: "Unix time of the last daily login check that logged in. time() minus " +
@@ -174,6 +188,20 @@ func (m *Metrics) observeSessionRefused(source, reason string, age, idle time.Du
 	}
 	m.sessionAgeAtFailure.WithLabelValues(source, reason).Observe(age.Seconds())
 	m.sessionIdleAtFailure.WithLabelValues(source, reason).Observe(idle.Seconds())
+}
+
+func (m *Metrics) observeSessionReuse(phase, result string) {
+	if m == nil {
+		return
+	}
+	m.sessionReuse.WithLabelValues(phase, result).Inc()
+}
+
+func (m *Metrics) observePreflight(result string) {
+	if m == nil {
+		return
+	}
+	m.preflights.WithLabelValues(result).Inc()
 }
 
 // setStoredSessions replaces the session gauges with what is stored now.
