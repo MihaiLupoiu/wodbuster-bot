@@ -140,6 +140,14 @@ func (m *Manager) SetUserStatus(ctx context.Context, chatID int64, status string
 	}
 	m.logger.Info("user status changed", "chat_id", chatID, "email", user.Email,
 		"from", was, "to", status)
+	// A disabled account is not booked for, so its session is a credential
+	// nobody needs. Approving it again later stores a new one at the next
+	// /login or Sunday preflight.
+	if status == models.StatusDisabled {
+		if err := m.storage.DeleteSession(ctx, chatID); err != nil {
+			m.logger.Error("could not delete the disabled user's session", "chat_id", chatID, "error", err)
+		}
+	}
 	return user, nil
 }
 
@@ -182,7 +190,8 @@ func (m *Manager) GetUser(ctx context.Context, chatID int64) (models.User, bool)
 func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, password string) error {
 	// A real login against the real site, so that bad credentials are caught
 	// here and not at noon on Sunday.
-	if _, err := m.booker.Authenticate(ctx, email, password); err != nil {
+	sess, err := m.booker.Authenticate(ctx, email, password)
+	if err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidWODBusterLogin, err)
 	}
 
@@ -215,7 +224,38 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 	user.UpdatedAt = now
 
 	m.logger.Info("Successfully validated login and saved user", "chat_id", chatID, "email", email)
-	return m.storage.SaveUser(ctx, user)
+	if err := m.storage.SaveUser(ctx, user); err != nil {
+		return err
+	}
+	m.storeLoginSession(ctx, chatID, sess)
+	return nil
+}
+
+// storeLoginSession keeps the session /login just made, replacing any older
+// one: a new login means the old session belongs to an old password or an old
+// device. Failing to store it is not the athlete's problem: the login worked,
+// and the next run logs in on its own.
+func (m *Manager) storeLoginSession(ctx context.Context, chatID int64, sess wodbuster.Session) {
+	if err := sess.Valid(); err != nil {
+		m.logger.Error("the login returned no usable session; nothing stored", "chat_id", chatID, "error", err)
+		return
+	}
+	st, err := sealSession(m.encryptionKey, chatID, sess, time.Now())
+	if err == nil {
+		err = m.storage.SaveSession(ctx, st)
+	}
+	if err != nil {
+		m.logger.Error("could not store the session from /login", "chat_id", chatID, "error", err)
+		return
+	}
+	m.logger.Info("session stored from /login", "chat_id", chatID,
+		"auth_expires_at", st.AuthExpiresAt, "trusted_device", st.TrustedDevice)
+}
+
+// GetSession is the athlete's stored session, for /status and /users. It
+// never leaves this package decrypted.
+func (m *Manager) GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error) {
+	return m.storage.GetSession(ctx, chatID)
 }
 
 func (m *Manager) GetDecryptedPassword(ctx context.Context, chatID int64) (string, error) {
