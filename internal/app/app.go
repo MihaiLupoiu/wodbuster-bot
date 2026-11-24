@@ -52,6 +52,10 @@ func New(config *Config) (*App, error) {
 	}
 	logger.Info("log level", "level", config.LoggerLevel.String())
 
+	if err := config.checkEncryptionKey(); err != nil {
+		return nil, err
+	}
+
 	// Initialize storage
 	var store usecase.Storage
 	var err error
@@ -92,10 +96,12 @@ func New(config *Config) (*App, error) {
 	bookingScheduler.SetMetrics(usecase.NewMetrics(promMetrics.Registry()))
 	bookingScheduler.SetLoginCheck(config.LoginCheckCron)
 	bookingScheduler.SetSessionRefresh(config.SessionRefreshCron)
-	if err := usecase.ValidReuseMode(config.SessionReuse); err != nil {
+	reuseMode, err := usecase.ParseReuseMode(config.SessionReuse)
+	if err != nil {
 		return nil, err
 	}
-	bookingScheduler.SetSessionPreflight(config.SessionPreflightCron, config.SessionReuse)
+	bookingScheduler.SetSessionPreflight(config.SessionPreflightCron, reuseMode)
+	bookingScheduler.SetPreflightAllOKMessage(config.PreflightAllOKMessage)
 
 	manager := usecase.NewManager(
 		store,
@@ -119,7 +125,7 @@ func New(config *Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Telegram bot: %w", err)
 	}
-	bot = bot.WithMetrics(telegram.NewMetrics(promMetrics.Registry()))
+	bot = bot.WithMetrics(telegram.NewMetrics(promMetrics.Registry())).WithLocation(loc)
 
 	// Results of the Sunday run go back to the athlete who asked for them.
 	bookingScheduler.SetNotifier(bot)

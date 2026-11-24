@@ -198,6 +198,10 @@ tightening only if it is ever seen.
       (encrypted) password, which is what the bot already kept. The cookie
       field, `SessionValid`, `SessionExpiresAt` and the session helpers are
       gone from the model.
+      *Superseded (2026-11, `feat/session-reuse`):* with "remember this
+      device" `.WBAuth` gets a 45-day sliding expiry, so sessions are stored
+      again, in their own `sessions` collection, kept alive by a 12-hourly
+      refresh. See `notes/session-reuse-plan.md`.
 
 - [ ] **`internal/booking.Run` and `cmd/wodbook`'s `run` are the same sequence
       twice.** Authenticate, sync the clock, resolve targets, read the server

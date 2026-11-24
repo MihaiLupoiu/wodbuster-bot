@@ -1,6 +1,7 @@
 package wodbuster
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -51,13 +52,13 @@ func (s Session) AuthExpiry() time.Time {
 // still accepts the session — for that, call Client.Ping.
 func (s Session) Valid() error {
 	if strings.TrimSpace(s.Box) == "" {
-		return fmt.Errorf("wodbuster: session has no box")
+		return errors.New("wodbuster: session has no box")
 	}
 	if strings.TrimSpace(s.AthleteID) == "" {
-		return fmt.Errorf("wodbuster: session has no athlete id")
+		return errors.New("wodbuster: session has no athlete id")
 	}
 	if len(s.Cookies) == 0 {
-		return fmt.Errorf("wodbuster: session has no cookies")
+		return errors.New("wodbuster: session has no cookies")
 	}
 	return nil
 }

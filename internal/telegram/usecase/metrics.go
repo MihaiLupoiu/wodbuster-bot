@@ -40,18 +40,27 @@ type Metrics struct {
 	sessionChecks        *prom.CounterVec
 	sessionAgeAtFailure  *prom.HistogramVec
 	sessionIdleAtFailure *prom.HistogramVec
-	sessionMaxAge        prom.Gauge
+	sessionOldestLogin   prom.Gauge
 	sessionAuthExpiry    *prom.GaugeVec
 	sessionsStored       prom.Gauge
+	refreshLastSuccess   prom.Gauge
+	reuseMode            *prom.GaugeVec
 	sessionReuse         *prom.CounterVec
 	preflights           *prom.CounterVec
+
+	// authExpiryChats are the chat ids sessionAuthExpiry has a series for,
+	// so that stale ones can go without a Reset that empties the gauge.
+	authExpiryChats map[string]bool
 }
 
 // sessionLifetimeBuckets run from an hour to the 45 days a remembered
-// .WBAuth lasts: the range a session's real lifetime falls in.
-var sessionLifetimeBuckets = []float64{
-	3600, 6 * 3600, 12 * 3600, 86400, 2 * 86400, 3 * 86400,
-	7 * 86400, 14 * 86400, 30 * 86400, 45 * 86400,
+// .WBAuth lasts: the range a session's real lifetime falls in. A function, so
+// no caller can change the buckets another one gets.
+func sessionLifetimeBuckets() []float64 {
+	return []float64{
+		3600, 6 * 3600, 12 * 3600, 86400, 2 * 86400, 3 * 86400,
+		7 * 86400, 14 * 86400, 30 * 86400, 45 * 86400,
+	}
 }
 
 func NewMetrics(reg prom.Registerer) *Metrics {
@@ -111,38 +120,53 @@ func NewMetrics(reg prom.Registerer) *Metrics {
 		sessionChecks: f.NewCounterVec(prom.CounterOpts{
 			Namespace: ns, Name: "session_checks_total",
 			Help: "Every check of a stored WodBuster session, by where it ran (refresh, " +
-				"preflight, run, test) and result (ok, expired, challenge, inconclusive, unreadable).",
+				"preflight) and result (ok, expired, challenge, inconclusive, unreadable).",
 		}, []string{"source", "result"}),
 
 		sessionAgeAtFailure: f.NewHistogramVec(prom.HistogramOpts{
 			Namespace: ns, Name: "session_age_at_failure_seconds",
 			Help: "How long after its login a stored session was refused. This is the " +
 				"measured lifetime of a session.",
-			Buckets: sessionLifetimeBuckets,
+			Buckets: sessionLifetimeBuckets(),
 		}, []string{"source", "reason"}),
 
 		sessionIdleAtFailure: f.NewHistogramVec(prom.HistogramOpts{
 			Namespace: ns, Name: "session_idle_at_failure_seconds",
 			Help:    "How long a refused session had gone unused: the idle gap it did not survive.",
-			Buckets: sessionLifetimeBuckets,
+			Buckets: sessionLifetimeBuckets(),
 		}, []string{"source", "reason"}),
 
-		sessionMaxAge: f.NewGauge(prom.GaugeOpts{
-			Namespace: ns, Name: "session_max_age_seconds",
-			Help: "Age of the oldest working stored session, since its login. Shows how " +
-				"long sessions really live.",
+		// Timestamps rather than ages: an age is computed when the gauge is
+		// set and freezes when nothing sets it again, which is exactly when
+		// the refresh has stopped. time() minus a timestamp keeps moving.
+		sessionOldestLogin: f.NewGauge(prom.GaugeOpts{
+			Namespace: ns, Name: "session_oldest_login_timestamp_seconds",
+			Help: "Unix time of the login of the oldest stored session of an active athlete. " +
+				"time() minus this is how long sessions really live. 0 with no session stored.",
 		}),
 
 		sessionAuthExpiry: f.NewGaugeVec(prom.GaugeOpts{
-			Namespace: ns, Name: "session_auth_expiry_seconds",
-			Help: "Seconds until each stored session's .WBAuth cookie expires. Absent for " +
-				"a session cookie. Under a week means the refresh has stopped renewing it.",
+			Namespace: ns, Name: "session_auth_expiry_timestamp_seconds",
+			Help: "Unix time each stored session's .WBAuth cookie expires. Absent for a session " +
+				"cookie. Under a week away means the refresh has stopped renewing it.",
 		}, []string{"chat_id"}),
 
 		sessionsStored: f.NewGauge(prom.GaugeOpts{
 			Namespace: ns, Name: "sessions_stored",
-			Help: "Active athletes with a stored session, after the last refresh.",
+			Help: "Active athletes with a stored session.",
 		}),
+
+		refreshLastSuccess: f.NewGauge(prom.GaugeOpts{
+			Namespace: ns, Name: "session_refresh_last_success_timestamp_seconds",
+			Help: "Unix time of the last session refresh that went through every athlete. " +
+				"time() minus this past a day means stored sessions are no longer kept alive.",
+		}),
+
+		reuseMode: f.NewGaugeVec(prom.GaugeOpts{
+			Namespace: ns, Name: "session_reuse_mode",
+			Help: "1 for the configured SESSION_REUSE (off, shadow). The session alerts " +
+				"join on it, so that off, which keeps no sessions, sets none of them off.",
+		}, []string{"mode"}),
 
 		sessionReuse: f.NewCounterVec(prom.CounterOpts{
 			Namespace: ns, Name: "session_reuse_total",
@@ -153,7 +177,7 @@ func NewMetrics(reg prom.Registerer) *Metrics {
 
 		preflights: f.NewCounterVec(prom.CounterOpts{
 			Namespace: ns, Name: "preflight_total",
-			Help: "Sunday session preflights, by result: all_ok, partial, failed.",
+			Help: "Sunday session preflights, by result: all_ok, partial, failed, nobody (no athlete had classes).",
 		}, []string{"result"}),
 
 		loginCheckLastPassed: f.NewGauge(prom.GaugeOpts{
@@ -190,11 +214,11 @@ func (m *Metrics) observeSessionRefused(source, reason string, age, idle time.Du
 	m.sessionIdleAtFailure.WithLabelValues(source, reason).Observe(idle.Seconds())
 }
 
-func (m *Metrics) observeSessionReuse(phase, result string) {
+func (m *Metrics) observeSessionReuse(phase ReuseMode, result string) {
 	if m == nil {
 		return
 	}
-	m.sessionReuse.WithLabelValues(phase, result).Inc()
+	m.sessionReuse.WithLabelValues(string(phase), result).Inc()
 }
 
 func (m *Metrics) observePreflight(result string) {
@@ -205,23 +229,52 @@ func (m *Metrics) observePreflight(result string) {
 }
 
 // setStoredSessions replaces the session gauges with what is stored now.
-func (m *Metrics) setStoredSessions(stored map[int64]models.StoredSession, now time.Time) {
+// Callers serialise it.
+func (m *Metrics) setStoredSessions(stored map[int64]models.StoredSession) {
 	if m == nil {
 		return
 	}
 	m.sessionsStored.Set(float64(len(stored)))
-	m.sessionAuthExpiry.Reset()
-	var oldest time.Duration
+	var oldest time.Time
+	chats := make(map[string]bool, len(stored))
 	for chatID, st := range stored {
-		if age := now.Sub(st.LoggedInAt); age > oldest {
-			oldest = age
+		if oldest.IsZero() || st.LoggedInAt.Before(oldest) {
+			oldest = st.LoggedInAt
 		}
 		if !st.AuthExpiresAt.IsZero() {
-			m.sessionAuthExpiry.WithLabelValues(strconv.FormatInt(chatID, 10)).
-				Set(st.AuthExpiresAt.Sub(now).Seconds())
+			label := strconv.FormatInt(chatID, 10)
+			chats[label] = true
+			m.sessionAuthExpiry.WithLabelValues(label).Set(float64(st.AuthExpiresAt.Unix()))
 		}
 	}
-	m.sessionMaxAge.Set(oldest.Seconds())
+	for label := range m.authExpiryChats {
+		if !chats[label] {
+			m.sessionAuthExpiry.DeleteLabelValues(label)
+		}
+	}
+	m.authExpiryChats = chats
+	if oldest.IsZero() {
+		m.sessionOldestLogin.Set(0)
+	} else {
+		m.sessionOldestLogin.Set(float64(oldest.Unix()))
+	}
+}
+
+// observeRefreshDone records a refresh that went through every athlete.
+func (m *Metrics) observeRefreshDone(at time.Time) {
+	if m == nil {
+		return
+	}
+	m.refreshLastSuccess.Set(float64(at.Unix()))
+}
+
+// setReuseMode records the configured SESSION_REUSE.
+func (m *Metrics) setReuseMode(mode ReuseMode) {
+	if m == nil {
+		return
+	}
+	m.reuseMode.Reset()
+	m.reuseMode.WithLabelValues(string(mode)).Set(1)
 }
 
 func (m *Metrics) observeRunStart(pending int) {

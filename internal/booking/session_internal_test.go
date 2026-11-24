@@ -207,3 +207,108 @@ func TestOnSessionIsNotCalledWhenTheLoginFails(t *testing.T) {
 	assert.ErrorIs(t, err, errStuck)
 	assert.False(t, called)
 }
+
+// A run cancelled while checking the stored session stops there: logging in
+// on a dead context would only fail later and slower.
+func TestRunWithACancelledContextDoesNotLogIn(t *testing.T) {
+	srv := wodbustertest.New(t)
+	s, logins := fakeService(t, srv)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := false
+	_, err := s.Run(ctx, "a@example.com", "pw",
+		[]Target{{Weekday: time.Monday, Start: "07:00", Class: "Wod"}},
+		RunOptions{Session: storedSession(srv), OnSession: func(wodbuster.Session, bool) { called = true }})
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 0, *logins)
+	assert.False(t, called)
+}
+
+// A challenge on the check says nothing about the session, but the run cannot
+// wait to find out: it logs in.
+func TestRunLogsInWhenTheStoredSessionMeetsAChallenge(t *testing.T) {
+	srv := wodbustertest.New(t)
+	s, logins := fakeService(t, srv)
+	srv.Challenge(true)
+	s.login = func(context.Context, string, string) (wodbuster.Session, error) {
+		*logins++
+		srv.Challenge(false)
+		sess := srv.Session()
+		sess.Cookies[0].Value = "fresh"
+		return sess, nil
+	}
+
+	var reused *bool
+	out := runOnce(t, s, srv, RunOptions{
+		Session:   storedSession(srv),
+		OnSession: func(_ wodbuster.Session, r bool) { reused = &r },
+	})
+	assert.Equal(t, "booked", out[0].Status)
+	assert.Equal(t, 1, *logins)
+	assert.Equal(t, []string{"fresh"}, cookieValuesSent(srv, "Calendario_Inscribir"))
+	require.NotNil(t, reused)
+	assert.False(t, *reused)
+}
+
+// A failed chase still leaves a session the server accepted, renewals
+// included; storing it saves the next run a login.
+func TestOnSessionIsCalledWhenTheChaseFails(t *testing.T) {
+	srv := wodbustertest.New(t)
+	s, _ := fakeService(t, srv)
+	until := time.Now().Add(45 * 24 * time.Hour).UTC().Truncate(time.Second)
+	srv.RenewCookies(renewal(until))
+	srv.RejectBookings("Ya te has apuntado a todas las clases de tu tarifa y no tienes créditos suficientes")
+
+	var got *wodbuster.Session
+	out := runOnce(t, s, srv, RunOptions{
+		Session:   storedSession(srv),
+		OnSession: func(sess wodbuster.Session, _ bool) { got = &sess },
+	})
+	assert.Equal(t, "failed", out[0].Status)
+	assert.ErrorIs(t, out[0].Err, wodbuster.ErrQuotaExceeded)
+	require.NotNil(t, got)
+	assert.True(t, got.AuthExpiry().Equal(until))
+}
+
+// So is a run that fails after it has a client, before the chase.
+func TestOnSessionIsCalledWhenTheRunFailsAfterTheClient(t *testing.T) {
+	srv := wodbustertest.New(t)
+	s, _ := fakeService(t, srv)
+	called := false
+	_, err := s.Run(context.Background(), "a@example.com", "pw",
+		[]Target{{Weekday: time.Monday, Start: "not a time", Class: "Wod"}},
+		RunOptions{Session: storedSession(srv), OnSession: func(wodbuster.Session, bool) { called = true }})
+	require.Error(t, err)
+	assert.True(t, called)
+}
+
+// A session the server refused during the run is dead; storing it would only
+// make the next run try it first.
+func TestOnSessionIsNotCalledWhenTheSessionExpiredDuringTheRun(t *testing.T) {
+	for name, expire := range map[string]func(*wodbustertest.Server){
+		"schedule shows the login page": func(srv *wodbustertest.Server) { srv.ExpireSession(true) },
+		"booking says log in again":     func(srv *wodbustertest.Server) { srv.RejectBookings("Inicia sesión de nuevo") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := wodbustertest.New(t)
+			s, _ := fakeService(t, srv)
+			expire(srv)
+			called := false
+			out := runOnce(t, s, srv, RunOptions{OnSession: func(wodbuster.Session, bool) { called = true }})
+			assert.ErrorIs(t, out[0].Err, wodbuster.ErrSessionExpired)
+			assert.False(t, called)
+		})
+	}
+}
+
+func TestCheckSessionRejectsAnInvalidSession(t *testing.T) {
+	srv := wodbustertest.New(t)
+	s, _ := fakeService(t, srv)
+	sess := *storedSession(srv)
+	sess.Box = ""
+	_, wantErr := wodbuster.NewClient(sess)
+	require.Error(t, wantErr)
+	_, err := s.CheckSession(context.Background(), sess)
+	assert.EqualError(t, err, wantErr.Error())
+	assert.Equal(t, 0, srv.Count("LoadClass"))
+}

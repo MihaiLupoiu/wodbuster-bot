@@ -31,7 +31,7 @@ func (b *recordingBooker) Authenticate(context.Context, string, string) (wodbust
 }
 
 func (b *recordingBooker) Login(context.Context, string, string,
-	func(int, int, error)) (wodbuster.Session, error) {
+	booking.LoginRetryFunc) (wodbuster.Session, error) {
 	return wodbuster.Session{}, nil
 }
 

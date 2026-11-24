@@ -47,6 +47,11 @@ func TestResponseVerdicts(t *testing.T) {
 		{"login page with 200", 200, nil, "/LoadClass", loginPage, "expired"},
 		{"redirected to login", 200, nil, "/account/login.aspx", "", "expired"},
 		{"json", 200, nil, "/LoadClass", `{"Data":[]}`, "other"},
+		{"json with login text", 200, http.Header{"Content-Type": {"application/json; charset=utf-8"}},
+			"/LoadClass", `{"Html":"<html>login</html>"}`, "other"},
+		{"json content type with a challenge header", 200,
+			http.Header{"Content-Type": {"application/json"}, "Cf-Mitigated": {"challenge"}},
+			"/LoadClass", `{}`, "challenge"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := tc.header

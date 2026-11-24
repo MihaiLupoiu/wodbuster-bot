@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -55,6 +56,7 @@ func newPreflightFixture(t *testing.T) *preflightFixture {
 		athleteWithClass(t, 7, email7),
 		athleteWithClass(t, 8, email8))
 	bs.SetSessionPreflight("0 11 * * 0", ReuseShadow)
+	bs.shadowJitter = 0
 	m := NewMetrics(prom.NewRegistry())
 	bs.SetMetrics(m)
 
@@ -77,22 +79,51 @@ func (f *preflightFixture) stored(t *testing.T, chatID int64) (wodbuster.Session
 }
 
 func (f *preflightFixture) reuse(result string) float64 {
-	return testutil.ToFloat64(f.metrics.sessionReuse.WithLabelValues(ReuseShadow, result))
+	return testutil.ToFloat64(f.metrics.sessionReuse.WithLabelValues(string(ReuseShadow), result))
 }
 
-func TestValidReuseMode(t *testing.T) {
-	assert.NoError(t, ValidReuseMode(ReuseOff))
-	assert.NoError(t, ValidReuseMode(ReuseShadow))
-	err := ValidReuseMode(ReuseLive)
+// preflightTime is 11:00 on the Sunday of the next opening: the preflight's
+// own slot, whatever day the tests run on. time.Now() on a Sunday from 11:50
+// is past the run's start, and every preflight would skip.
+func preflightTime(bs *BookingScheduler) time.Time {
+	return bs.opening.Next(time.Now()).Add(-time.Hour)
+}
+
+// From the run's start the run owns the logins: a preflight fired late (a
+// suspended host resuming at 11:55) does nothing.
+func TestPreflightSkipsWhenTheRunIsDue(t *testing.T) {
+	f := newPreflightFixture(t)
+	opensAt := f.bs.opening.Next(time.Now())
+	runStart := opensAt.Add(-f.bs.opening.StartBefore)
+
+	for _, at := range []time.Time{runStart, runStart.Add(5 * time.Minute), opensAt.Add(time.Minute)} {
+		f.bs.preflight(at)
+	}
+	assert.Empty(t, f.booker.logins)
+	assert.Empty(t, f.booker.checks)
+	assert.Empty(t, f.messages())
+
+	f.bs.preflight(runStart.Add(-time.Minute))
+	assert.Len(t, f.booker.logins, 2, "a minute before the run is still the preflight's")
+}
+
+func TestParseReuseMode(t *testing.T) {
+	for _, s := range []string{"off", "shadow"} {
+		m, err := ParseReuseMode(s)
+		require.NoError(t, err)
+		assert.Equal(t, ReuseMode(s), m)
+	}
+	_, err := ParseReuseMode("live")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not built yet", "live must not quietly act like shadow")
-	assert.Error(t, ValidReuseMode("on"))
+	_, err = ParseReuseMode("on")
+	assert.Error(t, err)
 }
 
 func TestPreflightLogsEveryoneInAndStoresTheSessions(t *testing.T) {
 	f := newPreflightFixture(t)
 
-	f.bs.preflight(time.Now())
+	f.bs.preflight(preflightTime(f.bs))
 
 	assert.ElementsMatch(t, []string{email7, email8}, f.booker.logins,
 		"athletes with classes; the admin has none")
@@ -122,7 +153,7 @@ func TestPreflightRecordsARefusedStoredSession(t *testing.T) {
 		return wodbuster.Session{}, wodbuster.ErrSessionExpired
 	}
 
-	f.bs.preflight(time.Now())
+	f.bs.preflight(preflightTime(f.bs))
 
 	assert.Equal(t, 1.0, f.reuse(reuseWouldFail))
 	assert.Equal(t, 1, testutil.CollectAndCount(f.metrics.sessionAgeAtFailure),
@@ -143,7 +174,7 @@ func TestPreflightOneLoginFails(t *testing.T) {
 		return wbSession("fresh-"+email, "fresh", time.Now(), time.Now().Add(45*24*time.Hour)), nil
 	}
 
-	f.bs.preflight(time.Now())
+	f.bs.preflight(preflightTime(f.bs))
 
 	sess7, _ := f.stored(t, 7)
 	assert.Equal(t, "fresh", sess7.Cookies[1].Value)
@@ -192,14 +223,14 @@ func TestShadowNeverBooksWithTheOldSession(t *testing.T) {
 func TestRunUsesThePreflightSessionAndCountsIt(t *testing.T) {
 	f := newPreflightFixture(t)
 	f.booker.runAccepts = true
-	f.bs.preflight(time.Now())
+	f.bs.preflight(preflightTime(f.bs))
 
 	f.bs.runWeek(time.Now())
 	assert.Equal(t, 2.0, f.reuse(reuseUsed))
 
 	f2 := newPreflightFixture(t)
 	f2.booker.runAccepts = false
-	f2.bs.preflight(time.Now())
+	f2.bs.preflight(preflightTime(f2.bs))
 	f2.bs.runWeek(time.Now())
 	assert.Equal(t, 2.0, f2.reuse(reuseFallback))
 	sess, _ := f2.stored(t, 7)
@@ -217,7 +248,7 @@ func TestThePreflightNeverOverlapsTheRun(t *testing.T) {
 	f.bs.booker = blocking
 
 	done := make(chan struct{})
-	go func() { defer close(done); f.bs.preflight(time.Now()) }()
+	go func() { defer close(done); f.bs.preflight(preflightTime(f.bs)) }()
 	<-entered
 
 	f.bs.runWeek(time.Now())
@@ -251,7 +282,7 @@ type blockingLogin struct {
 }
 
 func (b *blockingLogin) Login(ctx context.Context, email, _ string,
-	_ func(int, int, error)) (wodbuster.Session, error) {
+	_ booking.LoginRetryFunc) (wodbuster.Session, error) {
 	b.booker.event("login " + email)
 	b.once.Do(func() { close(b.entered) })
 	<-ctx.Done()
@@ -276,7 +307,7 @@ func TestPreflightDoesNothingWhenReuseIsOff(t *testing.T) {
 	f := newPreflightFixture(t)
 	f.bs.SetSessionPreflight("0 11 * * 0", ReuseOff)
 
-	f.bs.preflight(time.Now())
+	f.bs.preflight(preflightTime(f.bs))
 	assert.Empty(t, f.booker.logins)
 	assert.Empty(t, f.booker.checks)
 
@@ -288,7 +319,7 @@ func TestPreflightDoesNothingWhenReuseIsOff(t *testing.T) {
 func TestPreflightSkipsDuringTheRun(t *testing.T) {
 	f := newPreflightFixture(t)
 	f.bs.weekRunning.Store(true)
-	f.bs.preflight(time.Now())
+	f.bs.preflight(preflightTime(f.bs))
 	assert.Empty(t, f.booker.logins)
 }
 
@@ -304,4 +335,40 @@ func TestPreflightIsScheduledOnlyWhenReuseIsOn(t *testing.T) {
 	require.NoError(t, off.Start())
 	defer off.Stop()
 	assert.Len(t, off.cron.Entries(), 1, "only the weekly run")
+}
+
+// The shadow check deletes a session only when WodBuster refused it, or it
+// cannot be read. A challenge or a network error says nothing about it.
+func TestShadowCheckDeletesOnlyARefusedSession(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		check   error
+		corrupt bool
+		result  string
+		kept    bool
+	}{
+		{"accepted", nil, false, reuseWouldWork, true},
+		{"refused", wodbuster.ErrSessionExpired, false, reuseWouldFail, false},
+		{"challenge", wodbuster.ErrChallenge, false, reuseInconclusive, true},
+		{"network", errors.New("connection reset"), false, reuseInconclusive, true},
+		{"unreadable", nil, true, reuseWouldFail, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPreflightFixture(t)
+			f.booker.check = func(s wodbuster.Session) (wodbuster.Session, error) { return s, tc.check }
+			if tc.corrupt {
+				_, st := f.stored(t, 7)
+				st.Encrypted = "not a sealed session"
+				require.NoError(t, f.bs.storage.SaveSession(context.Background(), st))
+			}
+			u, _ := f.bs.storage.GetUser(context.Background(), 7)
+
+			assert.Equal(t, tc.result, f.bs.shadowCheck(context.Background(), u))
+
+			_, ok, err := f.bs.storage.GetSession(context.Background(), 7)
+			require.NoError(t, err)
+			assert.Equal(t, tc.kept, ok)
+			assert.Equal(t, 1.0, f.reuse(tc.result))
+		})
+	}
 }

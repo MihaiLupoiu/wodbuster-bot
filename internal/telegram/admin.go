@@ -111,7 +111,13 @@ func signupMessage(u models.User, username string) string {
 		who, u.ChatID, u.ChatID)
 }
 
+// storeTimeout bounds the storage reads a command makes, so a slow store
+// cannot hold a reply, or a handler goroutine, forever.
+const storeTimeout = 10 * time.Second
+
 func (b *Bot) handleUsers(ctx context.Context, chatID int64) {
+	ctx, cancel := context.WithTimeout(ctx, storeTimeout)
+	defer cancel()
 	users, err := b.manager.ListUsers(ctx)
 	if err != nil {
 		b.logger.Error("could not list the users", "err", err)
@@ -136,7 +142,8 @@ func (b *Bot) handleUsers(ctx context.Context, chatID int64) {
 // formatUsers lists pending accounts first, since they are the ones waiting
 // on the admin. hasSession says, for active users, whether a WodBuster session
 // is stored; an active user without one is marked, since Sunday's run will
-// have to log in for them.
+// have to log in for them. Whether a stored session still works is not known
+// here, so the mark says only that none is stored.
 func formatUsers(users []models.User, hasSession map[int64]bool) string {
 	if len(users) == 0 {
 		return "Nobody has logged in yet."
@@ -159,7 +166,7 @@ func formatUsers(users []models.User, hasSession map[int64]bool) string {
 			line += " · admin"
 		}
 		if ok, known := hasSession[u.ChatID]; u.IsActive() && known && !ok {
-			line += " · ⚠️ no session"
+			line += " · ⚠️ no stored session"
 		}
 		lines = append(lines, line)
 	}
@@ -264,8 +271,9 @@ func announcementRecipients(users []models.User) []int64 {
 // sessionLine describes a stored WodBuster session for /status. It says what
 // is known, not more: when WodBuster last accepted it, and when its login
 // cookie runs out. A session the refresh has not touched for a day is flagged,
-// because the refresh runs twice a day.
-func sessionLine(st models.StoredSession, ok bool, err error, now time.Time) string {
+// because the refresh runs twice a day. The expiry date is given in loc, the
+// gym's time zone, so it is the day the athlete would say; nil means UTC.
+func sessionLine(st models.StoredSession, ok bool, err error, now time.Time, loc *time.Location) string {
 	if err != nil {
 		return "❓ could not be read right now"
 	}
@@ -280,7 +288,14 @@ func sessionLine(st models.StoredSession, ok bool, err error, now time.Time) str
 	if st.AuthExpiresAt.IsZero() {
 		return s + " · login cookie ends with the session"
 	}
-	return s + " · login cookie expires " + st.AuthExpiresAt.Format("2006-01-02")
+	return s + " · login cookie expires " + st.AuthExpiresAt.In(orUTC(loc)).Format("2006-01-02")
+}
+
+func orUTC(loc *time.Location) *time.Location {
+	if loc == nil {
+		return time.UTC
+	}
+	return loc
 }
 
 // ago is a duration said the way a person would: "just now", "5m ago",

@@ -58,6 +58,12 @@ type Service struct {
 	log            *slog.Logger
 	metrics        *Metrics
 
+	// httpClient is shared by every wodbuster.Client the service builds, so
+	// they share one transport and its idle connections. Built once in New:
+	// without it NewClient would make a fresh transport per call and leak its
+	// idle connections.
+	httpClient *http.Client
+
 	// clientOpts go last when a wodbuster.Client is built. Tests use it to
 	// point clients at wodbustertest.
 	clientOpts []wodbuster.Option
@@ -133,6 +139,7 @@ func New(box string, loc *time.Location, log *slog.Logger, opts ...Option) *Serv
 	for _, o := range opts {
 		o(s)
 	}
+	s.httpClient = s.metrics.httpClientWith(&http.Client{Timeout: 20 * time.Second})
 	return s
 }
 
@@ -149,7 +156,7 @@ func (s *Service) Authenticate(ctx context.Context, email, password string) (wod
 // again. It is for the Sunday preflight, which must behave exactly like the
 // run it prepares.
 func (s *Service) Login(ctx context.Context, email, password string,
-	onRetry func(attempt, of int, err error)) (wodbuster.Session, error) {
+	onRetry LoginRetryFunc) (wodbuster.Session, error) {
 	return s.loginWithRetry(ctx, s.log.With("athlete", email, "box", s.box), email, password, onRetry)
 }
 
@@ -174,11 +181,7 @@ func (s *Service) CheckSession(ctx context.Context, sess wodbuster.Session) (wod
 }
 
 func (s *Service) newClient(sess wodbuster.Session) (*wodbuster.Client, error) {
-	opts := []wodbuster.Option{wodbuster.WithLogger(s.log)}
-	if s.metrics != nil {
-		opts = append(opts,
-			wodbuster.WithHTTPClient(s.metrics.httpClientWith(&http.Client{Timeout: 20 * time.Second})))
-	}
+	opts := []wodbuster.Option{wodbuster.WithLogger(s.log), wodbuster.WithHTTPClient(s.httpClient)}
 	return wodbuster.NewClient(sess, append(opts, s.clientOpts...)...)
 }
 
@@ -255,6 +258,10 @@ func (g *loginGate) release() {
 	<-g.slot
 }
 
+// LoginRetryFunc hears about a failed login that will be tried again: attempt
+// of the of attempts failed with err.
+type LoginRetryFunc func(attempt, of int, err error)
+
 // RunOptions says when to act and whether to touch anything.
 type RunOptions struct {
 	// OpensAt is the moment the week is published. Zero, or any time already
@@ -281,7 +288,7 @@ type RunOptions struct {
 	// once the last try is spent, which on 2026-11-15 was after the opening;
 	// this is how the people waiting hear about trouble while there is still
 	// time to book by hand.
-	OnLoginRetry func(attempt, of int, err error)
+	OnLoginRetry LoginRetryFunc
 
 	// Session, if set, is a stored session to try before logging in. The run
 	// checks it with one schedule read; if WodBuster accepts it the run uses
@@ -292,7 +299,10 @@ type RunOptions struct {
 	// the session as it stands when the run ends (renewals included), so the
 	// caller can store it. reused says whether that is the Session passed in
 	// (true) or one from a fresh login (false). It is called even when the
-	// chase itself fails, as long as the run got that far.
+	// chase itself fails, as long as the run got that far — except when the
+	// run's error or any chased class's error is wodbuster.ErrSessionExpired:
+	// then the server has refused the session and there is nothing worth
+	// storing.
 	OnSession func(sess wodbuster.Session, reused bool)
 }
 
@@ -328,9 +338,35 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 	if err != nil {
 		return nil, err
 	}
+	out, err := s.chase(ctx, log, client, targets, o)
 	if o.OnSession != nil {
-		defer func() { o.OnSession(client.Session(), reused) }()
+		if sessionExpired(out, err) {
+			log.Warn("the server refused the session during the run; not handing it back to store")
+		} else {
+			o.OnSession(client.Session(), reused)
+		}
 	}
+	return out, err
+}
+
+// sessionExpired says whether a run ended because WodBuster refused the
+// session. One session serves every goal, so one refusal is enough.
+func sessionExpired(out []Outcome, err error) bool {
+	if errors.Is(err, wodbuster.ErrSessionExpired) {
+		return true
+	}
+	for _, o := range out {
+		if errors.Is(o.Err, wodbuster.ErrSessionExpired) {
+			return true
+		}
+	}
+	return false
+}
+
+// chase is the run once it has a client: sync the clock, resolve the targets,
+// wait for the opening and chase.
+func (s *Service) chase(ctx context.Context, log *slog.Logger, client *wodbuster.Client,
+	targets []Target, o RunOptions) ([]Outcome, error) {
 
 	clock, err := wodbuster.NewServerClock(ctx, client, 4)
 	if err != nil {
@@ -407,7 +443,7 @@ func (s *Service) Run(ctx context.Context, email, password string, targets []Tar
 // clientFor gives the run a client: from the stored session when WodBuster
 // still accepts it, otherwise from a fresh login. reused says which.
 func (s *Service) clientFor(ctx context.Context, log *slog.Logger, email, password string,
-	o RunOptions) (client *wodbuster.Client, reused bool, err error) {
+	o RunOptions) (*wodbuster.Client, bool, error) {
 
 	if o.Session != nil {
 		started := time.Now()
@@ -435,7 +471,7 @@ func (s *Service) clientFor(ctx context.Context, log *slog.Logger, email, passwo
 	}
 	log.Info("logged in", "took", time.Since(started).Round(time.Millisecond),
 		"cookies", len(sess.Cookies))
-	client, err = s.newClient(sess)
+	client, err := s.newClient(sess)
 	if err != nil {
 		return nil, false, err
 	}
@@ -448,7 +484,7 @@ func (s *Service) clientFor(ctx context.Context, log *slog.Logger, email, passwo
 // that way once before and worked on the next try a minute later. The run
 // starts ten minutes early precisely so there is time for that.
 func (s *Service) loginWithRetry(ctx context.Context, log *slog.Logger,
-	email, password string, onRetry func(attempt, of int, err error)) (wodbuster.Session, error) {
+	email, password string, onRetry LoginRetryFunc) (wodbuster.Session, error) {
 
 	var err error
 	for attempt := 1; attempt <= s.loginAttempts; attempt++ {

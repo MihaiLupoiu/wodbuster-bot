@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"slices"
 	"sync"
 	"time"
 )
@@ -19,6 +20,8 @@ import (
 // Cookies are keyed by name and path, the same key browserauth uses when it
 // builds a Session. Domain is dropped, as it is there: NewClient sets every
 // cookie on both the box host and wodbuster.com.
+var _ http.CookieJar = (*recordingJar)(nil)
+
 type recordingJar struct {
 	jar *cookiejar.Jar
 
@@ -27,17 +30,20 @@ type recordingJar struct {
 	cookies map[string]*http.Cookie
 }
 
-func newRecordingJar(seed []*http.Cookie) (*recordingJar, error) {
+func newRecordingJar() (*recordingJar, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, err
 	}
-	r := &recordingJar{jar: jar, cookies: map[string]*http.Cookie{}}
-	r.record(seed, time.Now())
-	return r, nil
+	return &recordingJar{jar: jar, cookies: map[string]*http.Cookie{}}, nil
 }
 
 func (r *recordingJar) SetCookies(u *url.URL, cookies []*http.Cookie) {
+	// cookiejar.Jar panics on a nil cookie, and a stored Session that went
+	// through JSON can hold one.
+	if slices.Contains(cookies, nil) {
+		cookies = slices.DeleteFunc(slices.Clone(cookies), func(c *http.Cookie) bool { return c == nil })
+	}
 	r.jar.SetCookies(u, cookies)
 	r.record(cookies, time.Now())
 }
@@ -56,7 +62,9 @@ func (r *recordingJar) record(cookies []*http.Cookie, now time.Time) {
 			// The server deleted it.
 			if _, ok := r.cookies[key]; ok {
 				delete(r.cookies, key)
-				r.order = remove(r.order, key)
+				if i := slices.Index(r.order, key); i >= 0 {
+					r.order = slices.Delete(r.order, i, i+1)
+				}
 			}
 			continue
 		}
@@ -87,13 +95,4 @@ func (r *recordingJar) snapshot() []*http.Cookie {
 		out = append(out, &cp)
 	}
 	return out
-}
-
-func remove(keys []string, key string) []string {
-	for i, k := range keys {
-		if k == key {
-			return append(keys[:i], keys[i+1:]...)
-		}
-	}
-	return keys
 }

@@ -64,7 +64,7 @@ type Booker interface {
 	// Login logs in the way a run does: retries, the login gate, onRetry
 	// hearing about each failure that will be tried again.
 	Login(ctx context.Context, email, password string,
-		onRetry func(attempt, of int, err error)) (wodbuster.Session, error)
+		onRetry booking.LoginRetryFunc) (wodbuster.Session, error)
 	// CheckSession asks WodBuster whether it still accepts sess, with one
 	// schedule read, and returns the session as renewed by the server.
 	// wodbuster.ErrSessionExpired means refused; ErrChallenge and other
@@ -153,6 +153,7 @@ func (m *Manager) SetUserStatus(ctx context.Context, chatID int64, status string
 		if err := m.storage.DeleteSession(ctx, chatID); err != nil {
 			m.logger.Error("could not delete the disabled user's session", "chat_id", chatID, "error", err)
 		}
+		m.bookingScheduler.updateSessionGauges(ctx)
 	}
 	return user, nil
 }
@@ -235,33 +236,11 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 	}
 	// Only an account that is booked for keeps a credential. A newcomer gets
 	// one at the first preflight after approval; a disabled account never.
-	if user.IsActive() {
-		m.storeLoginSession(ctx, chatID, sess)
-	} else {
+	if !user.IsActive() {
 		m.logger.Info("account not active; the session is not stored", "chat_id", chatID, "status", user.Status)
 	}
+	m.bookingScheduler.storeFreshSession(ctx, user, sess, sourceLogin)
 	return nil
-}
-
-// storeLoginSession keeps the session /login just made, replacing any older
-// one: a new login means the old session belongs to an old password or an old
-// device. Failing to store it is not the athlete's problem: the login worked,
-// and the next run logs in on its own.
-func (m *Manager) storeLoginSession(ctx context.Context, chatID int64, sess wodbuster.Session) {
-	if err := sess.Valid(); err != nil {
-		m.logger.Error("the login returned no usable session; nothing stored", "chat_id", chatID, "error", err)
-		return
-	}
-	st, err := sealSession(m.encryptionKey, chatID, sess, time.Now())
-	if err == nil {
-		err = m.storage.SaveSession(ctx, st)
-	}
-	if err != nil {
-		m.logger.Error("could not store the session from /login", "chat_id", chatID, "error", err)
-		return
-	}
-	m.logger.Info("session stored from /login", "chat_id", chatID,
-		"auth_expires_at", st.AuthExpiresAt, "trusted_device", st.TrustedDevice)
 }
 
 // GetSession is the athlete's stored session, for /status and /users. It
@@ -312,8 +291,8 @@ func (m *Manager) CancelBooking(chatID int64) bool {
 }
 
 // TestUserSession checks that the stored credentials still work, by logging in
-// with them. There is no stored session to test any more — and "can I log in
-// right now" is the question that actually matters before an opening.
+// with them: "can I log in right now" is the question that matters before an
+// opening, whatever the stored session says.
 func (m *Manager) TestUserSession(ctx context.Context, chatID int64) error {
 	user, exists := m.storage.GetUser(ctx, chatID)
 	if !exists {
@@ -323,8 +302,15 @@ func (m *Manager) TestUserSession(ctx context.Context, chatID int64) error {
 	if err != nil {
 		return fmt.Errorf("could not read the stored password: %w", err)
 	}
-	_, err = m.booker.Authenticate(ctx, user.Email, password)
-	return err
+	sess, err := m.booker.Authenticate(ctx, user.Email, password)
+	if err != nil {
+		return err
+	}
+	// Kept, since it is the newest session the athlete has. Like every login
+	// with "remember this device", it has added a remembered device on
+	// WodBuster's side whether it is kept or not.
+	m.bookingScheduler.storeFreshSession(ctx, user, sess, sourceTest)
+	return nil
 }
 
 // Rehearse books nothing and reports what the run would find right now.

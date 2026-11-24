@@ -22,6 +22,7 @@ func managerLoggingIn(t *testing.T, store Storage, sess wodbuster.Session) *Mana
 	booker.EXPECT().Authenticate(mock.Anything, "athlete@example.com", "pw").Return(sess, nil)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	bs := NewBookingScheduler(store, booker, DefaultOpening(madrid(t)), testKey, log)
+	bs.SetSessionPreflight("", ReuseShadow)
 	return NewManager(store, booker, testKey, bs, log)
 }
 

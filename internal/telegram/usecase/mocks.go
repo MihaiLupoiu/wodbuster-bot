@@ -979,7 +979,7 @@ func (_c *MockBooker_CheckSession_Call) RunAndReturn(run func(ctx context.Contex
 }
 
 // Login provides a mock function for the type MockBooker
-func (_mock *MockBooker) Login(ctx context.Context, email string, password string, onRetry func(attempt int, of int, err error)) (wodbuster.Session, error) {
+func (_mock *MockBooker) Login(ctx context.Context, email string, password string, onRetry booking.LoginRetryFunc) (wodbuster.Session, error) {
 	ret := _mock.Called(ctx, email, password, onRetry)
 
 	if len(ret) == 0 {
@@ -988,15 +988,15 @@ func (_mock *MockBooker) Login(ctx context.Context, email string, password strin
 
 	var r0 wodbuster.Session
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, func(attempt int, of int, err error)) (wodbuster.Session, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, booking.LoginRetryFunc) (wodbuster.Session, error)); ok {
 		return returnFunc(ctx, email, password, onRetry)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, func(attempt int, of int, err error)) wodbuster.Session); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, booking.LoginRetryFunc) wodbuster.Session); ok {
 		r0 = returnFunc(ctx, email, password, onRetry)
 	} else {
 		r0 = ret.Get(0).(wodbuster.Session)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string, func(attempt int, of int, err error)) error); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string, booking.LoginRetryFunc) error); ok {
 		r1 = returnFunc(ctx, email, password, onRetry)
 	} else {
 		r1 = ret.Error(1)
@@ -1013,12 +1013,12 @@ type MockBooker_Login_Call struct {
 //   - ctx context.Context
 //   - email string
 //   - password string
-//   - onRetry func(attempt int, of int, err error)
+//   - onRetry booking.LoginRetryFunc
 func (_e *MockBooker_Expecter) Login(ctx interface{}, email interface{}, password interface{}, onRetry interface{}) *MockBooker_Login_Call {
 	return &MockBooker_Login_Call{Call: _e.mock.On("Login", ctx, email, password, onRetry)}
 }
 
-func (_c *MockBooker_Login_Call) Run(run func(ctx context.Context, email string, password string, onRetry func(attempt int, of int, err error))) *MockBooker_Login_Call {
+func (_c *MockBooker_Login_Call) Run(run func(ctx context.Context, email string, password string, onRetry booking.LoginRetryFunc)) *MockBooker_Login_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -1032,9 +1032,9 @@ func (_c *MockBooker_Login_Call) Run(run func(ctx context.Context, email string,
 		if args[2] != nil {
 			arg2 = args[2].(string)
 		}
-		var arg3 func(attempt int, of int, err error)
+		var arg3 booking.LoginRetryFunc
 		if args[3] != nil {
-			arg3 = args[3].(func(attempt int, of int, err error))
+			arg3 = args[3].(booking.LoginRetryFunc)
 		}
 		run(
 			arg0,
@@ -1051,7 +1051,7 @@ func (_c *MockBooker_Login_Call) Return(session wodbuster.Session, err error) *M
 	return _c
 }
 
-func (_c *MockBooker_Login_Call) RunAndReturn(run func(ctx context.Context, email string, password string, onRetry func(attempt int, of int, err error)) (wodbuster.Session, error)) *MockBooker_Login_Call {
+func (_c *MockBooker_Login_Call) RunAndReturn(run func(ctx context.Context, email string, password string, onRetry booking.LoginRetryFunc) (wodbuster.Session, error)) *MockBooker_Login_Call {
 	_c.Call.Return(run)
 	return _c
 }

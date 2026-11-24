@@ -1,7 +1,8 @@
 package models
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"time"
 )
 
@@ -58,7 +59,7 @@ func ActiveAdmins(users []User) []User {
 			out = append(out, u)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ChatID < out[j].ChatID })
+	slices.SortFunc(out, func(a, b User) int { return cmp.Compare(a.ChatID, b.ChatID) })
 	return out
 }
 

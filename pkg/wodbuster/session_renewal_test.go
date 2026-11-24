@@ -194,3 +194,69 @@ func TestChallengeIsNotAnExpiredSession(t *testing.T) {
 		t.Fatalf("login page: err = %v, want ErrSessionExpired", err)
 	}
 }
+
+func TestServerExpiredCookieLeavesTheSession(t *testing.T) {
+	srv := wodbustertest.New(t)
+	c := newClient(t, srv)
+	srv.RenewCookies(&http.Cookie{Name: "wb-test", Value: "gone", Path: "/",
+		Expires: time.Now().Add(-time.Hour)})
+	if err := c.Ping(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if ck := cookieNamed(c.Session(), "wb-test"); ck != nil {
+		t.Errorf("cookie expired by the server still in the session: %+v", ck)
+	}
+}
+
+// A login without "remember this device" leaves .WBAuth a browser-session
+// cookie. If the server renews a remembered one that way, the session stops
+// being one that lasts, and AuthExpiry must say so instead of keeping the old
+// date.
+func TestServerDowngradingAuthToASessionCookie(t *testing.T) {
+	srv := wodbustertest.New(t)
+	sess := srv.Session()
+	sess.Cookies = append(sess.Cookies, &http.Cookie{
+		Name: wodbuster.AuthCookieName, Value: "old", Path: "/",
+		Expires: time.Now().Add(45 * 24 * time.Hour).UTC().Truncate(time.Second),
+	})
+	c, err := wodbuster.NewClient(sess, wodbuster.WithHTTPClient(srv.HTTPClient()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Session().AuthExpiry().IsZero() {
+		t.Fatal("seeded .WBAuth expiry lost before any request")
+	}
+	srv.RenewCookies(&http.Cookie{Name: wodbuster.AuthCookieName, Value: "new", Path: "/"})
+	if err := c.Ping(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := c.Session()
+	if auth := cookieNamed(got, wodbuster.AuthCookieName); auth == nil || auth.Value != "new" {
+		t.Fatalf(".WBAuth = %+v, want the downgraded value", auth)
+	}
+	if exp := got.AuthExpiry(); !exp.IsZero() {
+		t.Errorf("AuthExpiry = %v, want zero for a session cookie", exp)
+	}
+}
+
+// A stored session whose .WBAuth has already expired must not hand that
+// cookie back as if it were still good.
+func TestSeedingAnExpiredAuthCookieDropsIt(t *testing.T) {
+	srv := wodbustertest.New(t)
+	sess := srv.Session()
+	sess.Cookies = append(sess.Cookies, &http.Cookie{
+		Name: wodbuster.AuthCookieName, Value: "stale", Path: "/",
+		Expires: time.Now().Add(-time.Hour),
+	})
+	c, err := wodbuster.NewClient(sess, wodbuster.WithHTTPClient(srv.HTTPClient()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := c.Session()
+	if ck := cookieNamed(got, wodbuster.AuthCookieName); ck != nil {
+		t.Errorf("expired .WBAuth kept: %+v", ck)
+	}
+	if cookieNamed(got, "wb-test") == nil || len(got.Cookies) != 1 {
+		t.Errorf("cookies = %+v, want only wb-test", got.Cookies)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -92,11 +93,12 @@ func NewClient(s Session, opts ...Option) (*Client, error) {
 			},
 		}
 	}
-	jar, err := newRecordingJar(s.Cookies)
+	jar, err := newRecordingJar()
 	if err != nil {
 		return nil, err
 	}
 	hc.Jar = jar
+	// SetCookies is also what records the seed for Session.
 	jar.SetCookies(base, s.Cookies)
 	// The login happens on the parent domain; carry the cookies there too.
 	if parent, err := url.Parse("https://wodbuster.com"); err == nil {
@@ -179,6 +181,9 @@ func looksLikeLogin(resp *http.Response, body []byte) bool {
 	if strings.Contains(strings.ToLower(resp.Request.URL.Path), "login") {
 		return true
 	}
+	if isJSONOK(resp) {
+		return false
+	}
 	head := strings.ToLower(string(body[:min(len(body), 2048)]))
 	return strings.Contains(head, "<html") && strings.Contains(head, "login")
 }
@@ -193,9 +198,24 @@ func looksLikeChallenge(resp *http.Response, body []byte) bool {
 	if resp.Header.Get("Cf-Mitigated") != "" {
 		return true
 	}
+	if isJSONOK(resp) {
+		return false
+	}
 	head := strings.ToLower(string(body[:min(len(body), 4096)]))
 	return strings.Contains(head, "<title>just a moment") ||
 		strings.Contains(head, "<title>attention required")
+}
+
+// isJSONOK reports a 200 that says it is JSON: how every handler answers when
+// all is well. Neither a login page nor a Cloudflare interstitial comes that
+// way, so the body scans above can skip it instead of lowercasing a copy of
+// every successful response.
+func isJSONOK(resp *http.Response) bool {
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	return err == nil && (mt == "application/json" || strings.HasSuffix(mt, "+json"))
 }
 
 func (c *Client) getJSON(ctx context.Context, op, path string, out any) error {
@@ -310,13 +330,6 @@ func (c *Client) ServerTime(ctx context.Context) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("ServerTime: unreadable Date header %q: %w", h, err)
 	}
 	return t, nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 type discardHandler struct{}

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"log"
 	"log/slog"
 	"os"
@@ -66,6 +67,10 @@ type Config struct {
 	// stored one). live is phase 2 and refused until it is built.
 	SessionReuse string `envconfig:"SESSION_REUSE" default:"shadow"`
 
+	// PreflightAllOKMessage sends the admins the preflight summary when every
+	// athlete logged in. false keeps them to the messages about trouble.
+	PreflightAllOKMessage bool `envconfig:"SESSION_PREFLIGHT_ALL_OK_MESSAGE" default:"true"`
+
 	// MongoDB configuration
 	MongoURI    string `envconfig:"MONGO_URI" default:"mongodb://localhost:27017"`
 	MongoDB     string `envconfig:"MONGO_DB" default:"wodbuster"`
@@ -123,4 +128,21 @@ func (c *Config) LoadDotEnv(configFile string) error {
 // from envconfig json tag
 func (c *Config) ParseEnv() error {
 	return envconfig.Process("", c)
+}
+
+// defaultEncryptionKey is the ENCRYPTION_KEY default. It is public, in this
+// file, so it protects nothing.
+const defaultEncryptionKey = "your-32-character-secret-key123"
+
+// checkEncryptionKey refuses the public default key with a persistent store.
+// That store holds the athletes' passwords and their WodBuster sessions,
+// which are bearer credentials; anyone with the database and this repository
+// could read them. The in-memory store loses everything on exit, so the
+// default stays usable for local runs and tests.
+func (c *Config) checkEncryptionKey() error {
+	if c.StorageType == "mongodb" && c.EncryptionKey == defaultEncryptionKey {
+		return errors.New("ENCRYPTION_KEY is the public default; set a secret one (16, 24 or 32 bytes) " +
+			"before storing passwords and sessions in MongoDB")
+	}
+	return nil
 }

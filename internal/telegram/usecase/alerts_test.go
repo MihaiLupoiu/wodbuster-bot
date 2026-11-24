@@ -137,11 +137,12 @@ func TestLoginTroubleWarnsEachAthleteOnceAndTheAdminsOncePerRun(t *testing.T) {
 	sent := collect(notifier)
 	opensAt := time.Date(2026, time.November, 15, 12, 0, 0, 0, madrid(t))
 
-	var once sync.Once
+	var alerts loginAlerts
 	for _, chatID := range []int64{7, 8} {
-		bs.loginTrouble(chatID, opensAt, 1, 3, errLoginStuck, &once)
-		bs.loginTrouble(chatID, opensAt, 2, 3, errLoginStuck, &once)
+		bs.loginTrouble(chatID, opensAt, 1, 3, errLoginStuck, &alerts)
+		bs.loginTrouble(chatID, opensAt, 2, 3, errLoginStuck, &alerts)
 	}
+	alerts.wait()
 
 	got := sent()
 	require.Len(t, got[7], 1, "the athlete is told once, on the first failure")
@@ -160,11 +161,34 @@ func TestAnAdminIsNotToldTwiceAboutTheirOwnRun(t *testing.T) {
 		adminUser(t, adminChat, "a@example.com"), adminUser(t, 2, "b@example.com"))
 	sent := collect(notifier)
 
-	var once sync.Once
-	bs.loginTrouble(adminChat, time.Now(), 1, 3, errLoginStuck, &once)
+	var alerts loginAlerts
+	bs.loginTrouble(adminChat, time.Now(), 1, 3, errLoginStuck, &alerts)
+	alerts.wait()
 
 	assert.Len(t, sent()[adminChat], 1, "only the athlete's warning")
 	assert.Len(t, sent()[2], 1, "the other admin is told")
+}
+
+// The messages go out in the background: a Telegram send that hangs must not
+// hold up the next login attempt.
+func TestLoginTroubleDoesNotWaitForTelegram(t *testing.T) {
+	bs, notifier := withAdmins(t, NewMockBooker(t), adminUser(t, adminChat, "a@example.com"))
+	release := make(chan struct{})
+	notifier.EXPECT().Notify(mock.Anything, mock.Anything).Run(func(int64, string) { <-release }).Return()
+
+	var alerts loginAlerts
+	returned := make(chan struct{})
+	go func() {
+		bs.loginTrouble(7, time.Now(), 1, 3, errLoginStuck, &alerts)
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("loginTrouble waited for a send")
+	}
+	close(release)
+	alerts.wait()
 }
 
 func TestAFailedRunIsReportedToTheAdminsToo(t *testing.T) {

@@ -119,6 +119,7 @@ func (m *MemoryStorage) UpdateBookingStatus(ctx context.Context, attemptID strin
 	return nil
 }
 
+// SaveSession stores the athlete's session, replacing any older one.
 func (m *MemoryStorage) SaveSession(ctx context.Context, s models.StoredSession) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -128,6 +129,7 @@ func (m *MemoryStorage) SaveSession(ctx context.Context, s models.StoredSession)
 	return nil
 }
 
+// GetSession returns the athlete's stored session; ok is false when there is none.
 func (m *MemoryStorage) GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -136,6 +138,7 @@ func (m *MemoryStorage) GetSession(ctx context.Context, chatID int64) (models.St
 	return s, ok, nil
 }
 
+// DeleteSession forgets the athlete's session; a missing one is fine.
 func (m *MemoryStorage) DeleteSession(ctx context.Context, chatID int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -144,6 +147,8 @@ func (m *MemoryStorage) DeleteSession(ctx context.Context, chatID int64) error {
 	return nil
 }
 
+// ReplaceSession stores s only if the stored session's UpdatedAt is still
+// prevUpdatedAt; see MongoStorage.ReplaceSession.
 func (m *MemoryStorage) ReplaceSession(ctx context.Context, prevUpdatedAt time.Time, s models.StoredSession) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -157,6 +162,7 @@ func (m *MemoryStorage) ReplaceSession(ctx context.Context, prevUpdatedAt time.T
 	return true, nil
 }
 
+// DeleteSessionIfUnchanged is DeleteSession with ReplaceSession's condition.
 func (m *MemoryStorage) DeleteSessionIfUnchanged(ctx context.Context, chatID int64, prevUpdatedAt time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

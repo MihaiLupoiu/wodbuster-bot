@@ -16,6 +16,7 @@ import (
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
+	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage"
 	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
 )
 
@@ -27,6 +28,8 @@ type sessionBooker struct {
 	login  func(email string) (wodbuster.Session, error)
 	checks []string // athlete ids
 	logins []string // emails
+	// authenticates counts the single-attempt logins among logins.
+	authenticates int
 
 	// retries[email] failed attempts are reported through onRetry before
 	// login is called, the way booking.Service.Login reports them.
@@ -44,12 +47,20 @@ func (b *sessionBooker) event(e string) {
 	b.events = append(b.events, e)
 }
 
-func (b *sessionBooker) Authenticate(context.Context, string, string) (wodbuster.Session, error) {
-	return wodbuster.Session{}, nil
+// Authenticate is one login attempt; the refresh logs in with it.
+func (b *sessionBooker) Authenticate(_ context.Context, email, _ string) (wodbuster.Session, error) {
+	b.mu.Lock()
+	b.logins = append(b.logins, email)
+	b.authenticates++
+	b.mu.Unlock()
+	if b.login == nil {
+		return wodbuster.Session{}, errors.New("no login scripted")
+	}
+	return b.login(email)
 }
 
 func (b *sessionBooker) Login(_ context.Context, email, _ string,
-	onRetry func(int, int, error)) (wodbuster.Session, error) {
+	onRetry booking.LoginRetryFunc) (wodbuster.Session, error) {
 	b.mu.Lock()
 	b.logins = append(b.logins, email)
 	n := b.retries[email]
@@ -67,6 +78,9 @@ func (b *sessionBooker) CheckSession(_ context.Context, s wodbuster.Session) (wo
 	b.mu.Lock()
 	b.checks = append(b.checks, s.AthleteID)
 	b.mu.Unlock()
+	if b.check == nil {
+		return s, nil // accepted, unchanged
+	}
 	return b.check(s)
 }
 
@@ -125,6 +139,8 @@ func newRefreshFixture(t *testing.T) *refreshFixture {
 	athlete.Email = "athlete@example.com"
 	bs, notifier := withAdmins(t, booker, adminUser(t, adminChat, "admin@example.com"), athlete)
 	bs.refreshGap, bs.refreshGapJitter, bs.refreshStartJitter = 0, 0, 0
+	// The refresh only runs where sessions are kept.
+	bs.SetSessionPreflight("", ReuseShadow)
 	m := NewMetrics(prom.NewRegistry())
 	bs.SetMetrics(m)
 
@@ -203,9 +219,11 @@ func TestRefreshStoresTheRenewedSession(t *testing.T) {
 	assert.Empty(t, f.messages(), "a working refresh is quiet")
 	assert.Equal(t, 1.0, f.checks(checkOK))
 	assert.Equal(t, 1.0, testutil.ToFloat64(f.metrics.sessionsStored))
-	assert.InDelta(t, 48*3600, testutil.ToFloat64(f.metrics.sessionMaxAge), 60)
-	assert.InDelta(t, time.Until(renewedUntil).Seconds(),
-		testutil.ToFloat64(f.metrics.sessionAuthExpiry.WithLabelValues("7")), 60)
+	assert.InDelta(t, float64(f.stored.LoggedInAt.Unix()), testutil.ToFloat64(f.metrics.sessionOldestLogin), 1)
+	assert.InDelta(t, float64(renewedUntil.Unix()),
+		testutil.ToFloat64(f.metrics.sessionAuthExpiry.WithLabelValues("7")), 1)
+	assert.InDelta(t, float64(time.Now().Unix()), testutil.ToFloat64(f.metrics.refreshLastSuccess), 5,
+		"a refresh that went through everyone is recorded")
 }
 
 func TestRefusedSessionIsReplacedByALogin(t *testing.T) {
@@ -228,6 +246,8 @@ func TestRefusedSessionIsReplacedByALogin(t *testing.T) {
 	assert.Equal(t, 1.0, f.checks(checkExpired))
 	assert.Equal(t, 1, testutil.CollectAndCount(f.metrics.sessionAgeAtFailure),
 		"the age it died at is recorded")
+	assert.Equal(t, 1, testutil.CollectAndCount(f.metrics.sessionIdleAtFailure),
+		"and the idle gap it did not survive")
 	assert.Equal(t, 1.0, testutil.ToFloat64(f.metrics.sessionsStored))
 }
 
@@ -397,6 +417,31 @@ func TestRefreshLosesToChangesMadeDuringIt(t *testing.T) {
 // An athlete disabled while the refresh is busy with someone else is not
 // checked at all: the list read at the start is not trusted.
 func TestRefreshReadsEachAthleteAgain(t *testing.T) {
+	t.Run("disabled during another's check", testRefreshRereadDuringCheck)
+	t.Run("disabled during the gap", testRefreshRereadDuringGap)
+}
+
+// testRefreshRereadDuringGap disables chat 8 once the refresh has read them
+// before the gap; only the read after the gap can see it.
+func testRefreshRereadDuringGap(t *testing.T) {
+	f := newRefreshFixture(t)
+	ctx := context.Background()
+	u := storedUser(t, 8, "pw")
+	require.NoError(t, f.bs.storage.SaveUser(ctx, u))
+	st, err := sealSession(testKey, 8, wbSession("athlete-8", "v", time.Now(), time.Time{}), time.Now())
+	require.NoError(t, err)
+	require.NoError(t, f.bs.storage.SaveSession(ctx, st))
+
+	hook := &disableOnRead{MemoryStorage: f.bs.storage.(*storage.MemoryStorage), chatID: 8, after: 1}
+	f.bs.storage = hook
+	f.bs.refreshGap = time.Millisecond
+	f.bs.RefreshSessions()
+
+	assert.Equal(t, []string{"athlete-7"}, f.booker.checks)
+	assert.Equal(t, 2, hook.reads(), "read before and after the gap")
+}
+
+func testRefreshRereadDuringCheck(t *testing.T) {
 	f := newRefreshFixture(t)
 	ctx := context.Background()
 	u := storedUser(t, 8, "pw")
@@ -423,9 +468,30 @@ func TestRefreshWaitsForTheBookingRun(t *testing.T) {
 		t.Fatal("no session check during a booking run")
 		return wodbuster.Session{}, nil
 	}
-	f.bs.activeBookingsMux.Lock()
-	f.bs.activeBookings[7] = &BookingContext{ChatID: 7, Cancel: func() {}}
-	f.bs.activeBookingsMux.Unlock()
+	f.bs.weekRunning.Store(true)
+
+	f.bs.RefreshSessions()
+	assert.Empty(t, f.booker.checks)
+}
+
+// A rehearsal is tracked like a run in progress, but writes no session: the
+// refresh at 03:00 or 15:00 must not be lost to a /rehearse.
+func TestARehearsalDoesNotCancelTheRefresh(t *testing.T) {
+	f := newRefreshFixture(t)
+	f.bs.track(9, models.BookingAttempt{Day: "Monday"}, func() {})
+	defer f.bs.untrack(9)
+
+	f.bs.RefreshSessions()
+	assert.Equal(t, []string{"athlete-7"}, f.booker.checks)
+}
+
+// Two refreshes never run side by side (a custom SESSION_REFRESH_CRON that
+// fires again before the last one ended): the run could stop only one.
+func TestASecondRefreshIsRefusedWhileOneIsGoing(t *testing.T) {
+	f := newRefreshFixture(t)
+	end, ok := f.bs.refreshJob.begin(func() {})
+	require.True(t, ok)
+	defer end()
 
 	f.bs.RefreshSessions()
 	assert.Empty(t, f.booker.checks)
@@ -456,12 +522,14 @@ func TestRefreshSpacesOutTheChecks(t *testing.T) {
 func TestSessionRefreshIsScheduled(t *testing.T) {
 	bs, _ := withAdmins(t, &sessionBooker{})
 	bs.SetSessionRefresh("0 3,15 * * *")
+	bs.SetSessionPreflight("", ReuseShadow)
 	require.NoError(t, bs.Start())
 	defer bs.Stop()
 	assert.Len(t, bs.cron.Entries(), 2, "the weekly run and the session refresh")
 
 	bad, _ := withAdmins(t, &sessionBooker{})
 	bad.SetSessionRefresh("not a cron spec")
+	bad.SetSessionPreflight("", ReuseShadow)
 	err := bad.Start()
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "session refresh"))
@@ -482,4 +550,38 @@ func TestJitterStaysInRangeAndVaries(t *testing.T) {
 	bs := NewBookingScheduler(nil, nil, DefaultOpening(time.UTC), testKey, nil)
 	assert.Equal(t, 5*time.Minute, bs.refreshStartJitter, "defaults are on")
 	assert.Equal(t, 20*time.Second, bs.refreshGapJitter)
+}
+
+// disableOnRead disables chatID right after its user has been read `after`
+// times, as an admin's /disable landing between two reads would.
+type disableOnRead struct {
+	*storage.MemoryStorage
+	chatID int64
+	after  int
+
+	mu sync.Mutex
+	n  int
+}
+
+func (s *disableOnRead) GetUser(ctx context.Context, chatID int64) (models.User, bool) {
+	u, ok := s.MemoryStorage.GetUser(ctx, chatID)
+	if chatID != s.chatID {
+		return u, ok
+	}
+	s.mu.Lock()
+	s.n++
+	n := s.n
+	s.mu.Unlock()
+	if n == s.after {
+		d := u
+		d.Status = models.StatusDisabled
+		_ = s.MemoryStorage.SaveUser(ctx, d)
+	}
+	return u, ok
+}
+
+func (s *disableOnRead) reads() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.n
 }
