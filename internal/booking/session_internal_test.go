@@ -22,6 +22,7 @@ func fakeService(t *testing.T, srv *wodbustertest.Server) (*Service, *int) {
 	t.Helper()
 	s := New("fake", time.UTC, slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithLoginAttempts(3, time.Millisecond))
+	s.storedPingBackoff = time.Millisecond
 	s.clientOpts = []wodbuster.Option{wodbuster.WithHTTPClient(srv.HTTPClient())}
 	logins := 0
 	s.login = func(context.Context, string, string) (wodbuster.Session, error) {
@@ -311,4 +312,66 @@ func TestCheckSessionRejectsAnInvalidSession(t *testing.T) {
 	_, err := s.CheckSession(context.Background(), sess)
 	assert.EqualError(t, err, wantErr.Error())
 	assert.Equal(t, 0, srv.Count("LoadClass"))
+}
+
+// failFirst fails the first n requests as a dropped connection would, then
+// lets the rest through to the fake server.
+type failFirst struct {
+	n    int
+	next http.RoundTripper
+}
+
+func (f *failFirst) RoundTrip(r *http.Request) (*http.Response, error) {
+	if f.n > 0 {
+		f.n--
+		return nil, errors.New("connection reset by peer")
+	}
+	return f.next.RoundTrip(r)
+}
+
+// A network blip on the run's check of a stored session is retried, not
+// answered with a browser login.
+func TestRunRetriesAnInconclusiveStoredSessionCheck(t *testing.T) {
+	srv := wodbustertest.New(t)
+	s, logins := fakeService(t, srv)
+	s.clientOpts = []wodbuster.Option{wodbuster.WithHTTPClient(
+		&http.Client{Transport: &failFirst{n: 1, next: srv.Transport()}})}
+
+	var reused *bool
+	out := runOnce(t, s, srv, RunOptions{
+		Session:   storedSession(srv),
+		OnSession: func(_ wodbuster.Session, r bool) { reused = &r },
+	})
+	assert.Equal(t, "booked", out[0].Status)
+	assert.Equal(t, 0, *logins, "the second check worked; no browser")
+	require.NotNil(t, reused)
+	assert.True(t, *reused)
+}
+
+// A refusal is final at once: no point asking again.
+func TestRunDoesNotRetryARefusedStoredSession(t *testing.T) {
+	srv := wodbustertest.New(t)
+	s, logins := fakeService(t, srv)
+	srv.ExpireSession(true)
+	s.login = func(context.Context, string, string) (wodbuster.Session, error) {
+		*logins++
+		srv.ExpireSession(false)
+		return srv.Session(), nil
+	}
+
+	runOnce(t, s, srv, RunOptions{Session: storedSession(srv)})
+	assert.Equal(t, 1, *logins)
+	stored := 0
+	for _, v := range cookieValuesSent(srv, "LoadClass") {
+		if v == "stored" {
+			stored++
+		}
+	}
+	assert.Equal(t, 1, stored, "the refused session is asked about once")
+}
+
+func TestTheSharedTransportKeepsEnoughIdleConnections(t *testing.T) {
+	tr := newTransport()
+	assert.GreaterOrEqual(t, tr.MaxIdleConnsPerHost, 16)
+	assert.NotSame(t, http.DefaultTransport, tr, "a clone, not the global")
 }

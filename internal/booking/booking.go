@@ -54,9 +54,11 @@ type Service struct {
 	loginAttempts  int
 	loginBackoff   time.Duration
 	gate           *loginGate
-	trustDevice    bool
-	log            *slog.Logger
-	metrics        *Metrics
+	// storedPingBackoff is storedSessionPingBackoff; tests shorten it.
+	storedPingBackoff time.Duration
+	trustDevice       bool
+	log               *slog.Logger
+	metrics           *Metrics
 
 	// httpClient is shared by every wodbuster.Client the service builds, so
 	// they share one transport and its idle connections. Built once in New:
@@ -134,13 +136,26 @@ const (
 func New(box string, loc *time.Location, log *slog.Logger, opts ...Option) *Service {
 	s := &Service{box: box, loc: loc, headless: true, log: log,
 		loginAttempts: defaultLoginAttempts, loginBackoff: defaultLoginBackoff,
-		trustDevice: true, gate: newLoginGate(0)}
+		trustDevice: true, gate: newLoginGate(0), storedPingBackoff: storedSessionPingBackoff}
 	s.login = s.authenticate
 	for _, o := range opts {
 		o(s)
 	}
-	s.httpClient = s.metrics.httpClientWith(&http.Client{Timeout: 20 * time.Second})
+	s.httpClient = s.metrics.httpClientWith(&http.Client{Timeout: 20 * time.Second, Transport: newTransport()})
 	return s
+}
+
+// idleConnsPerHost is how many idle connections to WodBuster the shared
+// transport keeps. Every athlete's first request at the opening goes out in
+// the same instant; http.DefaultTransport keeps 2, and over HTTP/1.1 every
+// other athlete would pay a fresh TLS handshake then.
+const idleConnsPerHost = 32
+
+func newTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 2 * idleConnsPerHost
+	t.MaxIdleConnsPerHost = idleConnsPerHost
+	return t
 }
 
 // Authenticate logs in once and returns the session. It is what /login needs:
@@ -449,7 +464,7 @@ func (s *Service) clientFor(ctx context.Context, log *slog.Logger, email, passwo
 		started := time.Now()
 		client, err := s.newClient(*o.Session)
 		if err == nil {
-			err = client.Ping(ctx)
+			err = s.pingStored(ctx, log, client)
 		}
 		if err == nil {
 			log.Info("using the stored session",
@@ -476,6 +491,38 @@ func (s *Service) clientFor(ctx context.Context, log *slog.Logger, email, passwo
 		return nil, false, err
 	}
 	return client, false, nil
+}
+
+// The run's check of a stored session is tried again on anything but a
+// refusal: a network blip or a challenge says nothing about the session, and
+// the browser login it would otherwise fall back to takes up to a minute and
+// a half.
+const (
+	storedSessionPings       = 3
+	storedSessionPingBackoff = 2 * time.Second
+)
+
+// pingStored checks a stored session for the run. Only the server refusing
+// it, or ctx ending, settles it at once; anything else is retried.
+func (s *Service) pingStored(ctx context.Context, log *slog.Logger, client *wodbuster.Client) error {
+	var err error
+	for attempt := 1; attempt <= storedSessionPings; attempt++ {
+		err = client.Ping(ctx)
+		if err == nil || errors.Is(err, wodbuster.ErrSessionExpired) || ctx.Err() != nil {
+			return err
+		}
+		if attempt == storedSessionPings {
+			break
+		}
+		log.Warn("stored session check inconclusive; trying again", "attempt", attempt,
+			"of", storedSessionPings, "err", err)
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-time.After(s.storedPingBackoff):
+		}
+	}
+	return err
 }
 
 // loginWithRetry logs in, trying again when the failure might be WodBuster's

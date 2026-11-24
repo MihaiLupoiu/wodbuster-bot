@@ -122,7 +122,7 @@ Create a `.env` file with the following variables:
 # Required
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token-here
 WODBUSTER_URL=https://wodbuster.com
-ENCRYPTION_KEY=your-32-character-encryption-key-here
+ENCRYPTION_KEY=change-me-to-32-random-bytes!!!!    # exactly 16, 24 or 32 bytes
 
 # Storage (optional, defaults to memory)
 STORAGE_TYPE=mongodb
@@ -144,11 +144,14 @@ SESSION_PREFLIGHT_ALL_OK_MESSAGE=true  # false = admins hear from the preflight 
 
 Cron specs are in `WODBUSTER_TIMEZONE`. `SESSION_REUSE=live` is refused at
 startup: it is phase 2 of the plan and not built yet. `SESSION_REUSE=off`
-switches the whole feature off: no refresh, no preflight, and `/login`,
-`/test` and the daily login check store nothing.
+switches the whole feature off: no refresh, no preflight, `/login`, `/test`
+and the daily login check store nothing, logins answer "just once" whatever
+`WODBUSTER_TRUST_DEVICE` says, and the sessions stored during shadow weeks are
+deleted at startup.
 
-With `STORAGE_TYPE=mongodb` the bot refuses to start on the default
-`ENCRYPTION_KEY`, because the database then holds passwords and session
+The bot refuses to start on an `ENCRYPTION_KEY` that is not 16, 24 or 32
+bytes long. With `STORAGE_TYPE=mongodb` it also refuses the default key,
+because the database then holds passwords and session
 cookies sealed with a key anyone can read in this repository. It also creates a
 unique index on `sessions.chat_id` at startup, so its MongoDB user needs the
 `createIndex` privilege.

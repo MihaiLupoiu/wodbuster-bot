@@ -401,24 +401,23 @@ func TestARehearsalLeavesTheStoredSessionAlone(t *testing.T) {
 func TestSessionGaugesComeFromTheStore(t *testing.T) {
 	f := newRefreshFixture(t)
 	f.bs.SetSessionPreflight("", ReuseShadow)
+	store := flaky(f.bs) // swapped before Start's background update reads it
 
 	require.NoError(t, f.bs.Start(), "a restart sets the gauges straight away")
 	defer f.bs.Stop()
 	require.Eventually(t, func() bool { return testutil.ToFloat64(f.metrics.sessionsStored) == 1 },
 		5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, 1.0, testutil.ToFloat64(f.metrics.reuseMode.WithLabelValues("shadow")))
-	f.bs.gaugesMu.Lock() // Start's update is done; the store below is swapped safely
-	f.bs.gaugesMu.Unlock()
 
 	// A read that fails leaves them as they were rather than dropping the
 	// athlete and setting off the "session lost" alerts.
-	flaky(f.bs).failGetSession.Store(true)
+	store.failGetSession.Store(true)
 	f.bs.updateSessionGauges(context.Background())
 	assert.Equal(t, 1.0, testutil.ToFloat64(f.metrics.sessionsStored))
 }
 
-// Every login is made with "remember this device"; the daily check keeps the
-// session it makes instead of leaving one more remembered device behind.
+// The daily check keeps the session it makes, when sessions are kept at all:
+// it is the newest the admin has.
 func TestLoginCheckKeepsTheAdminsSession(t *testing.T) {
 	for _, mode := range []ReuseMode{ReuseShadow, ReuseOff} {
 		t.Run(string(mode), func(t *testing.T) {

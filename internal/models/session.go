@@ -26,7 +26,9 @@ type StoredSession struct {
 	LastUsedAt time.Time `json:"last_used_at" bson:"last_used_at"`
 	// AuthExpiresAt is the Expires of .WBAuth, zero for a session cookie.
 	AuthExpiresAt time.Time `json:"auth_expires_at,omitempty" bson:"auth_expires_at,omitempty"`
-	// TrustedDevice is whether the login answered "remember this device".
+	// TrustedDevice is whether .WBAuth has an expiry, which is what
+	// answering "remember this device" gives it. Inferred from the cookie,
+	// not recorded at the login.
 	TrustedDevice bool      `json:"trusted_device" bson:"trusted_device"`
 	UpdatedAt     time.Time `json:"updated_at" bson:"updated_at"`
 }

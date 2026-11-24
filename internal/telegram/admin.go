@@ -124,9 +124,10 @@ func (b *Bot) handleUsers(ctx context.Context, chatID int64) {
 		b.Notify(chatID, "❌ Could not read the users: "+err.Error())
 		return
 	}
+	// With SESSION_REUSE=off nobody has a session, and that is no news.
 	sessions := map[int64]bool{}
 	for _, u := range users {
-		if !u.IsActive() {
+		if !u.IsActive() || !b.manager.StoresSessions() {
 			continue
 		}
 		_, ok, err := b.manager.GetSession(ctx, u.ChatID)

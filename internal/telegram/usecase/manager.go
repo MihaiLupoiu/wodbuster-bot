@@ -249,6 +249,10 @@ func (m *Manager) GetSession(ctx context.Context, chatID int64) (models.StoredSe
 	return m.storage.GetSession(ctx, chatID)
 }
 
+// StoresSessions says whether sessions are stored at all: false with
+// SESSION_REUSE=off.
+func (m *Manager) StoresSessions() bool { return m.bookingScheduler.storesSessions() }
+
 func (m *Manager) GetDecryptedPassword(ctx context.Context, chatID int64) (string, error) {
 	user, exists := m.storage.GetUser(ctx, chatID)
 	if !exists {

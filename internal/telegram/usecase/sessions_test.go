@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -38,6 +39,9 @@ type sessionBooker struct {
 	// stored session passed to Run works (true) or the run falls back.
 	runs       map[string]booking.RunOptions
 	runAccepts bool
+	// runExpires makes WodBuster refuse the session in the middle of the
+	// chase: booking.Service then hands no session back.
+	runExpires bool
 	events     []string
 }
 
@@ -92,9 +96,17 @@ func (b *sessionBooker) Run(_ context.Context, email, _ string, targets []bookin
 		b.runs = map[string]booking.RunOptions{}
 	}
 	b.runs[email] = o
-	accepts := b.runAccepts
+	accepts, expires := b.runAccepts, b.runExpires
 	b.mu.Unlock()
 
+	if expires {
+		out := make([]booking.Outcome, len(targets))
+		for i := range targets {
+			out[i] = booking.Outcome{Class: "Monday 07:00 Wod", Status: "failed",
+				Err: fmt.Errorf("booking: %w", wodbuster.ErrSessionExpired)}
+		}
+		return out, nil
+	}
 	if o.OnSession != nil {
 		if o.Session != nil && accepts {
 			o.OnSession(*o.Session, true)

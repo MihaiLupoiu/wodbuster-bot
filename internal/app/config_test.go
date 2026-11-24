@@ -38,32 +38,49 @@ func TestSessionDefaults(t *testing.T) {
 	assert.NoError(t, err, "the default mode must be one New accepts")
 }
 
-func TestTheDefaultKeyIsRefusedWithMongo(t *testing.T) {
+func TestCheckEncryptionKey(t *testing.T) {
 	for _, tc := range []struct {
 		storage, key string
-		ok           bool
+		want         string // "" means accepted
 	}{
-		{"mongodb", defaultEncryptionKey, false},
-		{"mongodb", "a-real-secret-key-of-32-bytes!!!", true},
-		{"memory", defaultEncryptionKey, true},
+		{"mongodb", defaultEncryptionKey, "public default"},
+		{"mongodb", "a-real-secret-key-of-32-bytes!!!", ""},
+		{"mongodb", "sixteen-byte-key", ""},
+		{"memory", defaultEncryptionKey, ""},
+		{"memory", "your-32-character-secret-key123", "31 bytes"}, // the old default
+		{"memory", "", "0 bytes"},
+		{"mongodb", "too-short", "9 bytes"},
 	} {
 		c := Config{StorageType: tc.storage, EncryptionKey: tc.key}
 		err := c.checkEncryptionKey()
-		assert.Equal(t, tc.ok, err == nil, "%s with %q: %v", tc.storage, tc.key, err)
+		if tc.want == "" {
+			assert.NoError(t, err, "%s with %q", tc.storage, tc.key)
+		} else if assert.Error(t, err, "%s with %q", tc.storage, tc.key) {
+			assert.Contains(t, err.Error(), tc.want)
+		}
 	}
 }
 
+// Each case must fail for its own reason, before anything is connected: the
+// Mongo URI points nowhere, and a later failure would pass a bare Error check.
 func TestNewRefusesBadSessionSettings(t *testing.T) {
-	for _, tc := range []struct{ name, reuse, key, storage string }{
-		{"live is not built", "live", "local-dev-key-do-not-use-in-prod", "memory"},
-		{"unknown mode", "on", "local-dev-key-do-not-use-in-prod", "memory"},
-		{"default key with mongo", "shadow", defaultEncryptionKey, "mongodb"},
+	for _, tc := range []struct{ name, reuse, key, storage, want string }{
+		{"live is not built", "live", defaultEncryptionKey, "mongodb", "phase 2"},
+		{"unknown mode", "on", defaultEncryptionKey, "mongodb", `SESSION_REUSE="on"`},
+		{"default key with mongo", "shadow", defaultEncryptionKey, "mongodb", "public default"},
+		{"key of the wrong length", "shadow", "short", "memory", "5 bytes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c := &Config{SessionReuse: tc.reuse, EncryptionKey: tc.key, StorageType: tc.storage,
+			key := tc.key
+			if tc.want != "public default" && tc.storage == "mongodb" {
+				key = "a-real-secret-key-of-32-bytes!!!"
+			}
+			c := &Config{SessionReuse: tc.reuse, EncryptionKey: key, StorageType: tc.storage,
 				Timezone: "Europe/Madrid", MongoURI: "mongodb://127.0.0.1:1"}
 			_, err := New(c)
-			assert.Error(t, err)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			assert.NotContains(t, err.Error(), "MongoDB storage", "refused before connecting")
 		})
 	}
 }

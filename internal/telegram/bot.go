@@ -32,6 +32,9 @@ type BotManager interface {
 	ListUsers(ctx context.Context) ([]models.User, error)
 	SetUserStatus(ctx context.Context, chatID int64, status string) (models.User, error)
 	GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error)
+	// StoresSessions is false with SESSION_REUSE=off, when no athlete has a
+	// stored session and none is expected.
+	StoresSessions() bool
 }
 
 type Bot struct {

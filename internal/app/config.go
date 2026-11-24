@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -43,7 +44,9 @@ type Config struct {
 
 	// TrustDevice makes logins answer "remember this device", so the session
 	// cookie gets a 45-day sliding expiry and a stored session lasts. False
-	// turns it off without a release.
+	// turns it off without a release. SESSION_REUSE=off turns it off too:
+	// with no session stored, a remembered device is only one more entry on
+	// the athlete's account.
 	TrustDevice bool `envconfig:"WODBUSTER_TRUST_DEVICE" default:"true"`
 
 	// LoginCheckCron is when the daily login check runs, in the gym's zone. It
@@ -77,7 +80,8 @@ type Config struct {
 	StorageType string `envconfig:"STORAGE_TYPE" default:"memory"` // "memory" or "mongodb"
 
 	// Security configuration
-	EncryptionKey string `envconfig:"ENCRYPTION_KEY" default:"your-32-character-secret-key123"`
+	// The default is public and only for local runs with the memory store.
+	EncryptionKey string `envconfig:"ENCRYPTION_KEY" default:"local-dev-key-do-not-use-in-prod"`
 
 	// Health check configuration
 	HealthCheckPort string `envconfig:"HEALTH_CHECK_PORT" default:"8080"`
@@ -99,12 +103,13 @@ func NewConfig(envFile string) (*Config, error) {
 	return cfg, nil
 }
 
-// NewLogger is the JSON logger at the configured level, with the bot token and
-// the database password redacted from everything it writes. slog.SetDefault
+// NewLogger is the JSON logger at the configured level, with the bot token,
+// the database password and the encryption key redacted from everything it
+// writes. slog.SetDefault
 // on it also routes the standard log package through the same redaction.
 func (c *Config) NewLogger() *slog.Logger {
 	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: c.LoggerLevel})
-	redactor := logging.NewRedactor(c.TelegramToken, logging.URIPassword(c.MongoURI))
+	redactor := logging.NewRedactor(c.TelegramToken, logging.URIPassword(c.MongoURI), c.EncryptionKey)
 	return slog.New(logging.NewHandler(jsonHandler, redactor))
 }
 
@@ -130,16 +135,23 @@ func (c *Config) ParseEnv() error {
 	return envconfig.Process("", c)
 }
 
-// defaultEncryptionKey is the ENCRYPTION_KEY default. It is public, in this
-// file, so it protects nothing.
-const defaultEncryptionKey = "your-32-character-secret-key123"
+// defaultEncryptionKey is the ENCRYPTION_KEY default, repeated from the
+// struct tag (a test keeps the two equal). It is public, in this repository,
+// so it protects nothing.
+const defaultEncryptionKey = "local-dev-key-do-not-use-in-prod"
 
-// checkEncryptionKey refuses the public default key with a persistent store.
-// That store holds the athletes' passwords and their WodBuster sessions,
-// which are bearer credentials; anyone with the database and this repository
-// could read them. The in-memory store loses everything on exit, so the
-// default stays usable for local runs and tests.
+// checkEncryptionKey refuses a key AES cannot use, whatever the store: it
+// would otherwise surface only at the first /login, as a failure to encrypt
+// the password. And it refuses the public default with a persistent store,
+// which holds the athletes' passwords and their WodBuster sessions, bearer
+// credentials anyone with the database and this repository could read. The
+// in-memory store loses everything on exit, so the default is fine there.
 func (c *Config) checkEncryptionKey() error {
+	switch len(c.EncryptionKey) {
+	case 16, 24, 32:
+	default:
+		return fmt.Errorf("ENCRYPTION_KEY is %d bytes; AES needs 16, 24 or 32", len(c.EncryptionKey))
+	}
 	if c.StorageType == "mongodb" && c.EncryptionKey == defaultEncryptionKey {
 		return errors.New("ENCRYPTION_KEY is the public default; set a secret one (16, 24 or 32 bytes) " +
 			"before storing passwords and sessions in MongoDB")

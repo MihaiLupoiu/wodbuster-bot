@@ -70,6 +70,7 @@ func TestUsersMarksOnlyActiveUsersKnownToHaveNoStoredSession(t *testing.T) {
 		{ChatID: 2, Email: "off@example.com", Status: models.StatusDisabled},
 		{ChatID: 3, Email: "none@example.com", Status: models.StatusActive},
 	}, nil)
+	m.EXPECT().StoresSessions().Return(true)
 	m.EXPECT().GetSession(mock.Anything, int64(1)).Return(models.StoredSession{}, false, errors.New("mongo down"))
 	m.EXPECT().GetSession(mock.Anything, int64(3)).Return(models.StoredSession{}, false, nil)
 	// No expectation for chat 2: the mock fails the test if a disabled
@@ -85,9 +86,24 @@ func TestUsersMarksOnlyActiveUsersKnownToHaveNoStoredSession(t *testing.T) {
 	assert.Contains(t, got, "✅ none@example.com · chat 3 · 0 class(es) · ⚠️ no stored session")
 }
 
+// With SESSION_REUSE=off no session is read and nobody is marked.
+func TestUsersMarksNobodyWhenSessionsAreOff(t *testing.T) {
+	m := NewMockBotManager(t)
+	m.EXPECT().ListUsers(mock.Anything).Return([]models.User{
+		{ChatID: 3, Email: "none@example.com", Status: models.StatusActive},
+	}, nil)
+	m.EXPECT().StoresSessions().Return(false)
+
+	b, tg := testBot(t, m)
+	b.handleUsers(context.Background(), 99)
+
+	assert.NotContains(t, tg.sent(), "no stored session")
+}
+
 func TestUsersReadsSessionsWithADeadline(t *testing.T) {
 	m := NewMockBotManager(t)
 	m.EXPECT().ListUsers(mock.Anything).Return([]models.User{{ChatID: 1, Status: models.StatusActive}}, nil)
+	m.EXPECT().StoresSessions().Return(true)
 	m.EXPECT().GetSession(mock.Anything, int64(1)).
 		RunAndReturn(func(ctx context.Context, _ int64) (models.StoredSession, bool, error) {
 			deadline, ok := ctx.Deadline()

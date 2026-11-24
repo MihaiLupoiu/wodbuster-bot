@@ -372,3 +372,23 @@ func TestShadowCheckDeletesOnlyARefusedSession(t *testing.T) {
 		})
 	}
 }
+
+// WodBuster refusing the preflight's session in the middle of the chase: the
+// run hands nothing back, so nothing is stored over the session the refresh
+// will find refused and replace, and the athlete hears why the classes failed.
+func TestASessionRefusedMidRunIsNotStored(t *testing.T) {
+	f := newPreflightFixture(t)
+	f.bs.preflight(preflightTime(f.bs))
+	_, before := f.stored(t, 7)
+	f.booker.runExpires = true
+
+	f.bs.runWeek(time.Now())
+
+	require.NotNil(t, f.booker.runs[email7].Session, "the preflight's session was offered")
+	_, after := f.stored(t, 7)
+	assert.Equal(t, before.Encrypted, after.Encrypted)
+	assert.Equal(t, 0.0, f.reuse(reuseUsed)+f.reuse(reuseFallback), "no session came back to count")
+	results := f.messages()[7]
+	require.NotEmpty(t, results)
+	assert.Contains(t, results[len(results)-1], "session")
+}
