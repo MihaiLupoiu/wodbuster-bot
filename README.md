@@ -277,14 +277,17 @@ Full detail, including the exit codes and what a rehearsal still does not prove:
 
 ## ⏰ **How the weekly run works**
 
-**All week.** `/login` stores the WodBuster session it gets (logged in with
-"remember this device", so the `.WBAuth` cookie lasts 45 days, moved forward
-on every use). Every 12 hours (`SESSION_REFRESH_CRON`, with a few minutes of
-random delay and 10–30s between athletes) the bot reads each active athlete's
-schedule once with their stored session. That keeps the session alive and
-stores the renewed cookie. A session WodBuster refuses is deleted and replaced
-by a fresh login; if that login fails too, the admins are told. A Cloudflare
-challenge or a network error keeps the session for the next try.
+**All week.** `/login` stores the WodBuster session it gets, for an approved
+account only (logged in with "remember this device", so the `.WBAuth` cookie
+lasts 45 days, moved forward on every use). Every 12 hours
+(`SESSION_REFRESH_CRON`, with a few minutes of random delay and 10–30s between
+athletes) the bot reads each active athlete's schedule once with their stored
+session. That keeps the session alive and stores the renewed cookie. A session
+WodBuster refuses is replaced by a fresh login; if that login fails too, it is
+deleted and the admins are told. A Cloudflare challenge, any other 403, or a
+network error keeps the session for the next try. A `/login` or `/disable`
+during the refresh always wins over it, and sessions left behind by accounts
+that are not active are deleted.
 
 **Sunday 11:00, the preflight** (`SESSION_PREFLIGHT_CRON`). For each athlete
 with classes, the bot checks whether the stored session would still work (and

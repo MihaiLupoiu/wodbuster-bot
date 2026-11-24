@@ -161,11 +161,16 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, *http.Response, 
 
 // looksLikeLogin spots the usual shape of an expired session: the handler
 // answers with the login page (or a redirect to it) instead of JSON.
+//
+// A 403 alone is not enough: a Cloudflare "Access denied" page or a WAF block
+// answers 403 too, and calling that an expired session makes the bot throw
+// away a good one and log in again. A 403 counts only with the login page in
+// it, which the checks below find.
 func looksLikeLogin(resp *http.Response, body []byte) bool {
 	if resp == nil {
 		return false
 	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return true
 	}
 	if loc := resp.Header.Get("Location"); strings.Contains(strings.ToLower(loc), "login") {

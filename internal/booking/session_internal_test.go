@@ -56,6 +56,7 @@ func TestAuthenticateReturnsTheSessionAndTriesOnce(t *testing.T) {
 	sess, err := s.Authenticate(context.Background(), "a@example.com", "pw")
 	require.NoError(t, err)
 	assert.Equal(t, "a", sess.AthleteID)
+	assert.Equal(t, 1, *calls)
 
 	s.login, calls = scriptedLogin(errStuck)
 	_, err = s.Authenticate(context.Background(), "a@example.com", "pw")

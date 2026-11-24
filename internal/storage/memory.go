@@ -143,3 +143,28 @@ func (m *MemoryStorage) DeleteSession(ctx context.Context, chatID int64) error {
 	delete(m.sessions, chatID)
 	return nil
 }
+
+func (m *MemoryStorage) ReplaceSession(ctx context.Context, prevUpdatedAt time.Time, s models.StoredSession) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cur, ok := m.sessions[s.ChatID]
+	if !ok || !cur.UpdatedAt.Equal(prevUpdatedAt) {
+		return false, nil
+	}
+	s.UpdatedAt = time.Now()
+	m.sessions[s.ChatID] = s
+	return true, nil
+}
+
+func (m *MemoryStorage) DeleteSessionIfUnchanged(ctx context.Context, chatID int64, prevUpdatedAt time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cur, ok := m.sessions[chatID]
+	if !ok || !cur.UpdatedAt.Equal(prevUpdatedAt) {
+		return false, nil
+	}
+	delete(m.sessions, chatID)
+	return true, nil
+}

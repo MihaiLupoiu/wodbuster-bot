@@ -327,6 +327,94 @@ func TestRefreshOnlyChecksActiveAthletesWithASession(t *testing.T) {
 
 	assert.Equal(t, []string{"athlete-7"}, f.booker.checks)
 	assert.Empty(t, f.booker.logins)
+	_, ok, err := f.bs.storage.GetSession(ctx, 8)
+	require.NoError(t, err)
+	assert.False(t, ok, "a disabled athlete's leftover session is deleted")
+}
+
+// The refresh holds a session for the length of a check or a login. Whatever
+// happens to the athlete in that time wins over what the refresh writes.
+func TestRefreshLosesToChangesMadeDuringIt(t *testing.T) {
+	ctx := context.Background()
+	disable := func(f *refreshFixture) {
+		u, _ := f.bs.storage.GetUser(ctx, 7)
+		u.Status = models.StatusDisabled
+		require.NoError(t, f.bs.storage.SaveUser(ctx, u))
+		require.NoError(t, f.bs.storage.DeleteSession(ctx, 7)) // what /disable does
+	}
+	relogin := func(f *refreshFixture) {
+		st, err := sealSession(testKey, 7, wbSession("athlete-7", "from-/login", time.Now(), time.Time{}), time.Now())
+		require.NoError(t, err)
+		// Memory timestamps can tie with the fixture's within a clock tick.
+		time.Sleep(time.Millisecond)
+		require.NoError(t, f.bs.storage.SaveSession(ctx, st))
+	}
+	expired := func(wodbuster.Session) (wodbuster.Session, error) {
+		return wodbuster.Session{}, wodbuster.ErrSessionExpired
+	}
+
+	for _, tc := range []struct {
+		name     string
+		expired  bool                  // the check refuses, so the refresh logs in
+		meantime func(*refreshFixture) // done during the check, or during the login
+		want     string                // the .WBAuth stored after; "" for none
+	}{
+		{"disabled during the check", false, disable, ""},
+		{"/login during the check", false, relogin, "from-/login"},
+		{"disabled during the login", true, disable, ""},
+		{"/login during the login", true, relogin, "from-/login"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRefreshFixture(t)
+			if tc.expired {
+				f.booker.check = expired
+				f.booker.login = func(string) (wodbuster.Session, error) {
+					tc.meantime(f)
+					return wbSession("athlete-7", "from-refresh", time.Now(), time.Time{}), nil
+				}
+			} else {
+				f.booker.check = func(s wodbuster.Session) (wodbuster.Session, error) {
+					tc.meantime(f)
+					return s, nil
+				}
+			}
+
+			f.bs.RefreshSessions()
+
+			st, ok := f.get(t)
+			if tc.want == "" {
+				assert.False(t, ok, "the refresh brought back a deleted session")
+				return
+			}
+			require.True(t, ok)
+			sess, err := openSession(testKey, st)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, sess.Cookies[1].Value)
+		})
+	}
+}
+
+// An athlete disabled while the refresh is busy with someone else is not
+// checked at all: the list read at the start is not trusted.
+func TestRefreshReadsEachAthleteAgain(t *testing.T) {
+	f := newRefreshFixture(t)
+	ctx := context.Background()
+	u := storedUser(t, 8, "pw")
+	require.NoError(t, f.bs.storage.SaveUser(ctx, u))
+	st, err := sealSession(testKey, 8, wbSession("athlete-8", "v", time.Now(), time.Time{}), time.Now())
+	require.NoError(t, err)
+	require.NoError(t, f.bs.storage.SaveSession(ctx, st))
+
+	f.booker.check = func(s wodbuster.Session) (wodbuster.Session, error) {
+		if s.AthleteID == "athlete-7" {
+			u.Status = models.StatusDisabled
+			require.NoError(t, f.bs.storage.SaveUser(ctx, u))
+		}
+		return s, nil
+	}
+	f.bs.RefreshSessions()
+
+	assert.Equal(t, []string{"athlete-7"}, f.booker.checks)
 }
 
 func TestRefreshWaitsForTheBookingRun(t *testing.T) {

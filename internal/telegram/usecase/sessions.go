@@ -106,10 +106,19 @@ func (bs *BookingScheduler) SetSessionRefresh(spec string) { bs.sessionRefreshSp
 //
 // What happens to each session depends on the answer:
 //   - accepted: the renewed session is stored.
-//   - refused (the login page): it is deleted, and the athlete is logged in
-//     again with the stored password. If that fails too, the admins are told.
+//   - refused (the login page): the athlete is logged in again with the stored
+//     password and the new session replaces it. If that fails too, it is
+//     deleted and the admins are told.
 //   - a Cloudflare challenge, or a network error: nothing was learned about
 //     the session, so it is kept and checked again next time.
+//
+// The refresh takes minutes, and an athlete can /login or be disabled in the
+// middle of it. So each athlete and their session are read just before the
+// check, and every write is conditional on the session not having changed
+// since: a newer write, or a deletion, always wins over the refresh.
+//
+// Sessions of athletes who are not active are deleted: only an account that
+// is booked for keeps a credential.
 //
 // Every check is a metric, and every refusal a log line with the session's age
 // and idle time: that is how the real lifetime of a session gets measured.
@@ -140,24 +149,26 @@ func (bs *BookingScheduler) RefreshSessions() {
 	started := time.Now()
 	kept := map[int64]models.StoredSession{}
 	checked := 0
-	for _, u := range users {
-		if !u.IsActive() {
+	for _, listed := range users {
+		if !listed.IsActive() {
+			bs.dropInactiveSession(ctx, listed.ChatID)
 			continue
 		}
-		st, ok, err := bs.storage.GetSession(ctx, u.ChatID)
-		if err != nil {
-			bs.logger.Error("could not read a stored session", "chat_id", u.ChatID, "error", err)
-			continue
-		}
-		if !ok {
+		if _, _, ok := bs.refreshTarget(ctx, listed.ChatID); !ok {
 			continue
 		}
 		if checked > 0 && !sleepCtx(ctx, bs.refreshGap+jitter(bs.refreshGapJitter)) {
 			break
 		}
+		// The list is minutes old by now: read the athlete and the session
+		// again, so a /disable or a /login made meanwhile is seen.
+		u, st, ok := bs.refreshTarget(ctx, listed.ChatID)
+		if !ok {
+			continue
+		}
 		checked++
-		if st, ok := bs.refreshOne(ctx, u, st, admins); ok {
-			kept[u.ChatID] = st
+		if cur, ok := bs.refreshOne(ctx, u, st, admins); ok {
+			kept[u.ChatID] = cur
 		}
 	}
 	bs.metrics.setStoredSessions(kept, time.Now())
@@ -175,28 +186,28 @@ func (bs *BookingScheduler) refreshOne(ctx context.Context, u models.User, st mo
 	sess, err := openSession(bs.encryptionKey, st)
 	if err != nil {
 		// A key change or a corrupt document. Either way it is useless.
-		log.Error("stored session unreadable; deleting it", "error", err)
+		log.Error("stored session unreadable; replacing it", "error", err)
 		bs.metrics.observeSessionCheck(sourceRefresh, checkUnreadable)
-		bs.deleteSession(ctx, log, u.ChatID)
-		return bs.relogin(ctx, log, u, admins, err)
+		return bs.relogin(ctx, log, u, st, admins, err)
 	}
 
 	renewed, err := bs.booker.CheckSession(ctx, sess)
 	now := time.Now()
 	switch {
 	case err == nil:
+		bs.metrics.observeSessionCheck(sourceRefresh, checkOK)
 		next, err := sealSession(bs.encryptionKey, u.ChatID, renewed, now)
 		if err != nil {
 			log.Error("could not seal the renewed session", "error", err)
 			return st, true
 		}
-		if err := bs.storage.SaveSession(ctx, next); err != nil {
+		cur, ok, err := bs.replaceSession(ctx, log, st, next)
+		if err != nil {
 			log.Error("could not store the renewed session", "error", err)
 			return st, true
 		}
-		bs.metrics.observeSessionCheck(sourceRefresh, checkOK)
 		log.Debug("session renewed", "new_auth_expires_at", next.AuthExpiresAt)
-		return next, true
+		return cur, ok
 
 	case errors.Is(err, wodbuster.ErrSessionExpired):
 		bs.metrics.observeSessionCheck(sourceRefresh, checkExpired)
@@ -209,8 +220,7 @@ func (bs *BookingScheduler) refreshOne(ctx context.Context, u models.User, st mo
 			"logged_in_at", st.LoggedInAt, "last_used_at", st.LastUsedAt,
 			"auth_expires_at", st.AuthExpiresAt, "trusted_device", st.TrustedDevice,
 			"error", err)
-		bs.deleteSession(ctx, log, u.ChatID)
-		return bs.relogin(ctx, log, u, admins, err)
+		return bs.relogin(ctx, log, u, st, admins, err)
 
 	case errors.Is(err, wodbuster.ErrChallenge):
 		bs.metrics.observeSessionCheck(sourceRefresh, checkChallenge)
@@ -224,10 +234,11 @@ func (bs *BookingScheduler) refreshOne(ctx context.Context, u models.User, st mo
 	}
 }
 
-// relogin replaces a lost session with a fresh login, the same way a run logs
-// in. A success is quiet; a failure goes to the admins, because the Sunday run
-// would meet the same failure.
-func (bs *BookingScheduler) relogin(ctx context.Context, log *slog.Logger, u models.User, admins []models.User, cause error) (models.StoredSession, bool) {
+// relogin replaces the lost session prev with a fresh login, the same way a
+// run logs in. A success is quiet; a failure deletes prev and goes to the
+// admins, because the Sunday run would meet the same failure.
+func (bs *BookingScheduler) relogin(ctx context.Context, log *slog.Logger, u models.User,
+	prev models.StoredSession, admins []models.User, cause error) (models.StoredSession, bool) {
 
 	password, err := utils.DecryptPassword(u.Password, bs.encryptionKey)
 	var sess wodbuster.Session
@@ -235,17 +246,21 @@ func (bs *BookingScheduler) relogin(ctx context.Context, log *slog.Logger, u mod
 		sess, err = bs.booker.Login(ctx, u.Email, password, nil)
 	}
 	if err == nil {
-		var st models.StoredSession
-		if st, err = sealSession(bs.encryptionKey, u.ChatID, sess, time.Now()); err == nil {
-			err = bs.storage.SaveSession(ctx, st)
-		}
-		if err == nil {
-			log.Info("lost session replaced by a new login",
-				"auth_expires_at", st.AuthExpiresAt, "trusted_device", st.TrustedDevice)
-			return st, true
+		var next models.StoredSession
+		if next, err = sealSession(bs.encryptionKey, u.ChatID, sess, time.Now()); err == nil {
+			var cur models.StoredSession
+			var ok bool
+			if cur, ok, err = bs.replaceSession(ctx, log, prev, next); err == nil {
+				log.Info("lost session replaced by a new login",
+					"auth_expires_at", next.AuthExpiresAt, "trusted_device", next.TrustedDevice)
+				return cur, ok
+			}
 		}
 	}
 	log.Error("could not replace a lost session", "error", err)
+	if _, derr := bs.storage.DeleteSessionIfUnchanged(ctx, u.ChatID, prev.UpdatedAt); derr != nil {
+		log.Error("could not delete the lost session", "error", derr)
+	}
 	bs.tellAdmins(admins, 0, fmt.Sprintf(
 		"🚨 Session refresh: the stored WodBuster session for chat %d (%s) stopped working (%v), "+
 			"and logging in again failed: %v\n\n"+
@@ -254,9 +269,58 @@ func (bs *BookingScheduler) relogin(ctx context.Context, log *slog.Logger, u mod
 	return models.StoredSession{}, false
 }
 
-func (bs *BookingScheduler) deleteSession(ctx context.Context, log *slog.Logger, chatID int64) {
-	if err := bs.storage.DeleteSession(ctx, chatID); err != nil {
-		log.Error("could not delete the stored session", "error", err)
+// replaceSession stores next in place of prev, unless the stored session
+// changed since prev was read. Then the newer one stands, and it is what comes
+// back; ok is false when nothing is stored any more.
+func (bs *BookingScheduler) replaceSession(ctx context.Context, log *slog.Logger,
+	prev, next models.StoredSession) (models.StoredSession, bool, error) {
+
+	replaced, err := bs.storage.ReplaceSession(ctx, prev.UpdatedAt, next)
+	if err != nil {
+		return models.StoredSession{}, false, err
+	}
+	if replaced {
+		return next, true, nil
+	}
+	log.Info("the stored session changed during the refresh; keeping the newer one")
+	cur, ok, err := bs.storage.GetSession(ctx, prev.ChatID)
+	if err != nil {
+		log.Error("could not read the newer session", "error", err)
+		return models.StoredSession{}, false, nil
+	}
+	return cur, ok, nil
+}
+
+// refreshTarget reads an athlete and their stored session; ok is false when
+// the athlete is gone or not active, or has no session.
+func (bs *BookingScheduler) refreshTarget(ctx context.Context, chatID int64) (models.User, models.StoredSession, bool) {
+	u, ok := bs.storage.GetUser(ctx, chatID)
+	if !ok || !u.IsActive() {
+		return models.User{}, models.StoredSession{}, false
+	}
+	st, ok, err := bs.storage.GetSession(ctx, chatID)
+	if err != nil {
+		bs.logger.Error("could not read a stored session", "chat_id", chatID, "error", err)
+		return models.User{}, models.StoredSession{}, false
+	}
+	return u, st, ok
+}
+
+// dropInactiveSession deletes the session of an athlete who is not active.
+// /disable deletes it already; this catches the rest, such as one stored
+// before /login stopped storing sessions for accounts that are not active.
+func (bs *BookingScheduler) dropInactiveSession(ctx context.Context, chatID int64) {
+	st, ok, err := bs.storage.GetSession(ctx, chatID)
+	if err != nil || !ok {
+		return
+	}
+	deleted, err := bs.storage.DeleteSessionIfUnchanged(ctx, chatID, st.UpdatedAt)
+	if err != nil {
+		bs.logger.Error("could not delete an inactive athlete's session", "chat_id", chatID, "error", err)
+		return
+	}
+	if deleted {
+		bs.logger.Info("deleted the session of an athlete who is not active", "chat_id", chatID)
 	}
 }
 

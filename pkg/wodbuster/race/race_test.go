@@ -272,6 +272,33 @@ func TestChaseAbortsOnExpiredSession(t *testing.T) {
 	}
 }
 
+// A Cloudflare challenge is not a lost session: the chase keeps going, at the
+// backoff's pace rather than PollEvery's, and books once the challenge lifts.
+func TestChaseBacksOffThroughAChallenge(t *testing.T) {
+	srv := wodbustertest.New(t)
+	srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: monday, Capacity: 12})
+	srv.Challenge(true)
+
+	o := fastOptions()
+	o.ChallengeBackoff = 200 * time.Millisecond
+
+	done := make(chan []race.Result, 1)
+	go func() { done <- race.Chase(context.Background(), client(t, srv), []race.Goal{goal(false)}, o) }()
+
+	time.Sleep(500 * time.Millisecond)
+	challenged := srv.Count("LoadClass")
+	srv.Challenge(false)
+	results := <-done
+
+	if results[0].Outcome != race.OutcomeBooked {
+		t.Fatalf("outcome = %v, err = %v", results[0].Outcome, results[0].Err)
+	}
+	// 500ms at a 200ms backoff is three polls; at PollEvery it would be 25.
+	if challenged > 4 {
+		t.Errorf("polled %d times through the challenge; the backoff was not applied", challenged)
+	}
+}
+
 func TestOpensAtUsesTheServerCountdown(t *testing.T) {
 	srv := wodbustertest.New(t)
 	srv.AddClass(wodbustertest.Class{Name: "Wod", Start: "07:00", Date: monday})

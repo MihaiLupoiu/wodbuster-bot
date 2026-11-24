@@ -236,3 +236,26 @@ func (m *MongoStorage) DeleteSession(ctx context.Context, chatID int64) error {
 	}
 	return nil
 }
+
+// ReplaceSession stores s only if the stored session is still the one whose
+// UpdatedAt was prevUpdatedAt. ok is false when it changed or is gone: someone
+// else wrote it in between, and their write stands. prevUpdatedAt must come
+// from GetSession, so it carries Mongo's millisecond precision.
+func (m *MongoStorage) ReplaceSession(ctx context.Context, prevUpdatedAt time.Time, s models.StoredSession) (bool, error) {
+	s.UpdatedAt = time.Now()
+	res, err := m.sessionsCollection.ReplaceOne(ctx,
+		bson.M{"chat_id": s.ChatID, "updated_at": prevUpdatedAt}, s)
+	if err != nil {
+		return false, fmt.Errorf("failed to replace session: %w", err)
+	}
+	return res.MatchedCount == 1, nil
+}
+
+// DeleteSessionIfUnchanged is DeleteSession with ReplaceSession's condition.
+func (m *MongoStorage) DeleteSessionIfUnchanged(ctx context.Context, chatID int64, prevUpdatedAt time.Time) (bool, error) {
+	res, err := m.sessionsCollection.DeleteOne(ctx, bson.M{"chat_id": chatID, "updated_at": prevUpdatedAt})
+	if err != nil {
+		return false, fmt.Errorf("failed to delete session: %w", err)
+	}
+	return res.DeletedCount == 1, nil
+}

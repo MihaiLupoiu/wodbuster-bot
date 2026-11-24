@@ -46,6 +46,12 @@ type Storage interface {
 	SaveSession(ctx context.Context, s models.StoredSession) error
 	GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error)
 	DeleteSession(ctx context.Context, chatID int64) error
+	// ReplaceSession and DeleteSessionIfUnchanged act only if the stored
+	// session's UpdatedAt is still prevUpdatedAt; ok is false otherwise. The
+	// refresh holds a session for minutes, and a /login or /disable in that
+	// time must win over it.
+	ReplaceSession(ctx context.Context, prevUpdatedAt time.Time, s models.StoredSession) (bool, error)
+	DeleteSessionIfUnchanged(ctx context.Context, chatID int64, prevUpdatedAt time.Time) (bool, error)
 }
 
 // Booker is the bot's view of pkg/wodbuster, implemented by internal/booking.
@@ -227,7 +233,13 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 	if err := m.storage.SaveUser(ctx, user); err != nil {
 		return err
 	}
-	m.storeLoginSession(ctx, chatID, sess)
+	// Only an account that is booked for keeps a credential. A newcomer gets
+	// one at the first preflight after approval; a disabled account never.
+	if user.IsActive() {
+		m.storeLoginSession(ctx, chatID, sess)
+	} else {
+		m.logger.Info("account not active; the session is not stored", "chat_id", chatID, "status", user.Status)
+	}
 	return nil
 }
 

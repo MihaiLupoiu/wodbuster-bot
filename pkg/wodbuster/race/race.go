@@ -113,6 +113,12 @@ type Options struct {
 	// ends then; the cap only bites when one poll is slow or fails.
 	ResolveWait time.Duration
 
+	// ChallengeBackoff is the pause after a Cloudflare challenge, in place of
+	// PollEvery or RetryEvery. A plain HTTP client cannot pass a challenge,
+	// so asking again at full speed only tells Cloudflare it was right; a
+	// slower pace still books if the challenge lifts on its own.
+	ChallengeBackoff time.Duration
+
 	// DryRun resolves everything and stops short of the booking call.
 	DryRun bool
 
@@ -143,6 +149,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.ResolveWait <= 0 {
 		o.ResolveWait = 250 * time.Millisecond
+	}
+	if o.ChallengeBackoff <= 0 {
+		o.ChallengeBackoff = 2 * time.Second
 	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.NewTextHandler(discard{}, &slog.HandlerOptions{Level: slog.LevelError + 1}))
@@ -242,6 +251,12 @@ func chaseOne(ctx context.Context, c *wodbuster.Client, g Goal, o Options, deadl
 				res.Err, res.At = err, time.Now()
 				return res
 			}
+			if errors.Is(err, wodbuster.ErrChallenge) {
+				o.Log.Warn("Cloudflare challenge while polling; backing off",
+					"goal", g.Target.String(), "backoff", o.ChallengeBackoff)
+				sleep(ctx, o.ChallengeBackoff)
+				continue
+			}
 			o.Log.Debug("poll failed", "goal", g.Target.String(), "err", err)
 			sleep(ctx, o.PollEvery)
 			continue
@@ -327,6 +342,12 @@ func book(ctx context.Context, c *wodbuster.Client, g Goal, class wodbuster.Clas
 			o.Log.Info("not retrying", "goal", g.Target.String(),
 				"attempt", attempt, "err", err)
 			break
+		}
+		if errors.Is(err, wodbuster.ErrChallenge) {
+			o.Log.Warn("Cloudflare challenge while booking; backing off",
+				"goal", g.Target.String(), "attempt", attempt, "backoff", o.ChallengeBackoff)
+			sleep(ctx, o.ChallengeBackoff)
+			continue
 		}
 
 		o.Log.Debug("booking attempt failed",

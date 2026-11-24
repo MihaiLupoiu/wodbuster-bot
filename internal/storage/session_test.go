@@ -17,6 +17,8 @@ type sessionStore interface {
 	SaveSession(ctx context.Context, s models.StoredSession) error
 	GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error)
 	DeleteSession(ctx context.Context, chatID int64) error
+	ReplaceSession(ctx context.Context, prevUpdatedAt time.Time, s models.StoredSession) (bool, error)
+	DeleteSessionIfUnchanged(ctx context.Context, chatID int64, prevUpdatedAt time.Time) (bool, error)
 }
 
 // testSessions is the contract both stores keep. Memory backs the use-case
@@ -78,6 +80,46 @@ func testSessions(t *testing.T, st sessionStore) {
 		require.NoError(t, err)
 		assert.False(t, ok)
 		require.NoError(t, st.DeleteSession(ctx, 4), "deleting a missing session is fine")
+	})
+
+	// The refresh's writes: they land only on the session it read, never on
+	// one written or deleted since.
+	t.Run("replace and delete only if unchanged", func(t *testing.T) {
+		require.NoError(t, st.SaveSession(ctx, models.StoredSession{ChatID: 6, Encrypted: "read"}))
+		read, ok, err := st.GetSession(ctx, 6)
+		require.NoError(t, err)
+		require.True(t, ok)
+
+		replaced, err := st.ReplaceSession(ctx, read.UpdatedAt, models.StoredSession{ChatID: 6, Encrypted: "renewed"})
+		require.NoError(t, err)
+		assert.True(t, replaced)
+		got, _, err := st.GetSession(ctx, 6)
+		require.NoError(t, err)
+		assert.Equal(t, "renewed", got.Encrypted)
+		assert.WithinDuration(t, time.Now(), got.UpdatedAt, time.Minute, "updated_at is set on replace")
+
+		// The same stale read again: someone has written since.
+		replaced, err = st.ReplaceSession(ctx, read.UpdatedAt, models.StoredSession{ChatID: 6, Encrypted: "stale"})
+		require.NoError(t, err)
+		assert.False(t, replaced)
+		deleted, err := st.DeleteSessionIfUnchanged(ctx, 6, read.UpdatedAt)
+		require.NoError(t, err)
+		assert.False(t, deleted)
+		got, _, err = st.GetSession(ctx, 6)
+		require.NoError(t, err)
+		assert.Equal(t, "renewed", got.Encrypted)
+
+		deleted, err = st.DeleteSessionIfUnchanged(ctx, 6, got.UpdatedAt)
+		require.NoError(t, err)
+		assert.True(t, deleted)
+
+		// Gone: a replace must not bring it back.
+		replaced, err = st.ReplaceSession(ctx, got.UpdatedAt, models.StoredSession{ChatID: 6, Encrypted: "revived"})
+		require.NoError(t, err)
+		assert.False(t, replaced)
+		_, ok, err = st.GetSession(ctx, 6)
+		require.NoError(t, err)
+		assert.False(t, ok)
 	})
 
 	// The reason sessions have their own collection: saving one must leave

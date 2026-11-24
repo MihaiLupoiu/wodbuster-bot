@@ -30,6 +30,7 @@ func managerLoggingIn(t *testing.T, store Storage, sess wodbuster.Session) *Mana
 func TestLoginStoresTheSession(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStorage()
+	require.NoError(t, store.SaveUser(ctx, storedUser(t, 7, "old-pw")))
 	exp := time.Now().Add(45 * 24 * time.Hour).UTC().Truncate(time.Second)
 	m := managerLoggingIn(t, store, wbSession("a7", "from-login", time.Now(), exp))
 
@@ -48,6 +49,7 @@ func TestLoginStoresTheSession(t *testing.T) {
 func TestANewLoginReplacesTheOldSession(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStorage()
+	require.NoError(t, store.SaveUser(ctx, storedUser(t, 7, "old-pw")))
 	old, err := sealSession(testKey, 7, wbSession("a7", "old", time.Now().Add(-72*time.Hour), time.Time{}), time.Now())
 	require.NoError(t, err)
 	require.NoError(t, store.SaveSession(ctx, old))
@@ -77,6 +79,32 @@ func TestAnEmptySessionIsNotStored(t *testing.T) {
 	_, ok, err := m.GetSession(ctx, 7)
 	require.NoError(t, err)
 	assert.False(t, ok)
+}
+
+// /login is open to everyone, but only an active account keeps a credential:
+// a newcomer waiting for approval, or a disabled account, gets none stored.
+func TestLoginStoresNoSessionForAnAccountThatIsNotActive(t *testing.T) {
+	for _, status := range []string{"", models.StatusPending, models.StatusDisabled} {
+		t.Run("status "+status, func(t *testing.T) {
+			ctx := context.Background()
+			store := storage.NewMemoryStorage()
+			if status != "" {
+				u := storedUser(t, 7, "old-pw")
+				u.Status = status
+				require.NoError(t, store.SaveUser(ctx, u))
+			}
+			m := managerLoggingIn(t, store, wbSession("a7", "v", time.Now(), time.Now().Add(time.Hour)))
+
+			require.NoError(t, m.LogInAndSave(ctx, 7, "athlete@example.com", "pw"))
+
+			u, ok := store.GetUser(ctx, 7)
+			require.True(t, ok, "the login itself is still saved")
+			assert.True(t, u.IsAuthenticated)
+			_, ok, err := m.GetSession(ctx, 7)
+			require.NoError(t, err)
+			assert.False(t, ok)
+		})
+	}
 }
 
 func TestDisablingAUserDeletesTheirSession(t *testing.T) {
