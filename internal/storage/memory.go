@@ -12,6 +12,7 @@ import (
 type MemoryStorage struct {
 	users    map[int64]models.User
 	bookings map[string]models.BookingAttempt
+	sessions map[int64]models.StoredSession
 	mu       sync.RWMutex
 }
 
@@ -19,6 +20,7 @@ func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
 		users:    make(map[int64]models.User),
 		bookings: make(map[string]models.BookingAttempt),
+		sessions: make(map[int64]models.StoredSession),
 	}
 }
 
@@ -115,4 +117,60 @@ func (m *MemoryStorage) UpdateBookingStatus(ctx context.Context, attemptID strin
 	m.bookings[attemptID] = booking
 
 	return nil
+}
+
+// SaveSession stores the athlete's session, replacing any older one.
+func (m *MemoryStorage) SaveSession(ctx context.Context, s models.StoredSession) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s.UpdatedAt = sessionStamp()
+	m.sessions[s.ChatID] = s
+	return nil
+}
+
+// GetSession returns the athlete's stored session; ok is false when there is none.
+func (m *MemoryStorage) GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[chatID]
+	return s, ok, nil
+}
+
+// DeleteSession forgets the athlete's session; a missing one is fine.
+func (m *MemoryStorage) DeleteSession(ctx context.Context, chatID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.sessions, chatID)
+	return nil
+}
+
+// ReplaceSession stores s only if the stored session's UpdatedAt is still
+// prevUpdatedAt; see MongoStorage.ReplaceSession.
+func (m *MemoryStorage) ReplaceSession(ctx context.Context, prevUpdatedAt time.Time, s models.StoredSession) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cur, ok := m.sessions[s.ChatID]
+	if !ok || !cur.UpdatedAt.Equal(prevUpdatedAt) {
+		return false, nil
+	}
+	s.UpdatedAt = sessionStamp()
+	m.sessions[s.ChatID] = s
+	return true, nil
+}
+
+// DeleteSessionIfUnchanged is DeleteSession with ReplaceSession's condition.
+func (m *MemoryStorage) DeleteSessionIfUnchanged(ctx context.Context, chatID int64, prevUpdatedAt time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cur, ok := m.sessions[chatID]
+	if !ok || !cur.UpdatedAt.Equal(prevUpdatedAt) {
+		return false, nil
+	}
+	delete(m.sessions, chatID)
+	return true, nil
 }

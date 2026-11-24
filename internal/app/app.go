@@ -52,9 +52,22 @@ func New(config *Config) (*App, error) {
 	}
 	logger.Info("log level", "level", config.LoggerLevel.String())
 
+	if err := config.checkEncryptionKey(); err != nil {
+		return nil, err
+	}
+	// Before anything connects: a typo here should not wait on MongoDB.
+	reuseMode, err := usecase.ParseReuseMode(config.SessionReuse)
+	if err != nil {
+		return nil, err
+	}
+	// No stored sessions, no reason to remember the device.
+	trustDevice := config.TrustDevice && reuseMode != usecase.ReuseOff
+	if config.TrustDevice && !trustDevice {
+		logger.Info("WODBUSTER_TRUST_DEVICE ignored: SESSION_REUSE=off stores no sessions")
+	}
+
 	// Initialize storage
 	var store usecase.Storage
-	var err error
 
 	// The registry comes first: storage instruments the Mongo driver with it.
 	promMetrics := metrics.NewPrometheus()
@@ -85,11 +98,15 @@ func New(config *Config) (*App, error) {
 		booking.WithChromePath(config.ChromePath),
 		booking.WithDiagnosticsDir(config.DiagnosticsDir),
 		booking.WithLoginGap(config.LoginGap),
+		booking.WithTrustDevice(trustDevice),
 		booking.WithMetrics(booking.NewMetrics(promMetrics.Registry())))
 
 	bookingScheduler := usecase.NewBookingScheduler(store, booker, opening, config.EncryptionKey, logger)
 	bookingScheduler.SetMetrics(usecase.NewMetrics(promMetrics.Registry()))
 	bookingScheduler.SetLoginCheck(config.LoginCheckCron)
+	bookingScheduler.SetSessionRefresh(config.SessionRefreshCron)
+	bookingScheduler.SetSessionPreflight(config.SessionPreflightCron, reuseMode)
+	bookingScheduler.SetPreflightAllOKMessage(config.PreflightAllOKMessage)
 
 	manager := usecase.NewManager(
 		store,
@@ -113,7 +130,7 @@ func New(config *Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Telegram bot: %w", err)
 	}
-	bot = bot.WithMetrics(telegram.NewMetrics(promMetrics.Registry()))
+	bot = bot.WithMetrics(telegram.NewMetrics(promMetrics.Registry())).WithLocation(loc)
 
 	// Results of the Sunday run go back to the athlete who asked for them.
 	bookingScheduler.SetNotifier(bot)

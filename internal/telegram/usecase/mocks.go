@@ -6,9 +6,11 @@ package usecase
 
 import (
 	"context"
+	"time"
 
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
+	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -37,6 +39,135 @@ type MockStorage_Expecter struct {
 
 func (_m *MockStorage) EXPECT() *MockStorage_Expecter {
 	return &MockStorage_Expecter{mock: &_m.Mock}
+}
+
+// DeleteSession provides a mock function for the type MockStorage
+func (_mock *MockStorage) DeleteSession(ctx context.Context, chatID int64) error {
+	ret := _mock.Called(ctx, chatID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteSession")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64) error); ok {
+		r0 = returnFunc(ctx, chatID)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockStorage_DeleteSession_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteSession'
+type MockStorage_DeleteSession_Call struct {
+	*mock.Call
+}
+
+// DeleteSession is a helper method to define mock.On call
+//   - ctx context.Context
+//   - chatID int64
+func (_e *MockStorage_Expecter) DeleteSession(ctx interface{}, chatID interface{}) *MockStorage_DeleteSession_Call {
+	return &MockStorage_DeleteSession_Call{Call: _e.mock.On("DeleteSession", ctx, chatID)}
+}
+
+func (_c *MockStorage_DeleteSession_Call) Run(run func(ctx context.Context, chatID int64)) *MockStorage_DeleteSession_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 int64
+		if args[1] != nil {
+			arg1 = args[1].(int64)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStorage_DeleteSession_Call) Return(err error) *MockStorage_DeleteSession_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockStorage_DeleteSession_Call) RunAndReturn(run func(ctx context.Context, chatID int64) error) *MockStorage_DeleteSession_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// DeleteSessionIfUnchanged provides a mock function for the type MockStorage
+func (_mock *MockStorage) DeleteSessionIfUnchanged(ctx context.Context, chatID int64, prevUpdatedAt time.Time) (bool, error) {
+	ret := _mock.Called(ctx, chatID, prevUpdatedAt)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteSessionIfUnchanged")
+	}
+
+	var r0 bool
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64, time.Time) (bool, error)); ok {
+		return returnFunc(ctx, chatID, prevUpdatedAt)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64, time.Time) bool); ok {
+		r0 = returnFunc(ctx, chatID, prevUpdatedAt)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, int64, time.Time) error); ok {
+		r1 = returnFunc(ctx, chatID, prevUpdatedAt)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockStorage_DeleteSessionIfUnchanged_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteSessionIfUnchanged'
+type MockStorage_DeleteSessionIfUnchanged_Call struct {
+	*mock.Call
+}
+
+// DeleteSessionIfUnchanged is a helper method to define mock.On call
+//   - ctx context.Context
+//   - chatID int64
+//   - prevUpdatedAt time.Time
+func (_e *MockStorage_Expecter) DeleteSessionIfUnchanged(ctx interface{}, chatID interface{}, prevUpdatedAt interface{}) *MockStorage_DeleteSessionIfUnchanged_Call {
+	return &MockStorage_DeleteSessionIfUnchanged_Call{Call: _e.mock.On("DeleteSessionIfUnchanged", ctx, chatID, prevUpdatedAt)}
+}
+
+func (_c *MockStorage_DeleteSessionIfUnchanged_Call) Run(run func(ctx context.Context, chatID int64, prevUpdatedAt time.Time)) *MockStorage_DeleteSessionIfUnchanged_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 int64
+		if args[1] != nil {
+			arg1 = args[1].(int64)
+		}
+		var arg2 time.Time
+		if args[2] != nil {
+			arg2 = args[2].(time.Time)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStorage_DeleteSessionIfUnchanged_Call) Return(b bool, err error) *MockStorage_DeleteSessionIfUnchanged_Call {
+	_c.Call.Return(b, err)
+	return _c
+}
+
+func (_c *MockStorage_DeleteSessionIfUnchanged_Call) RunAndReturn(run func(ctx context.Context, chatID int64, prevUpdatedAt time.Time) (bool, error)) *MockStorage_DeleteSessionIfUnchanged_Call {
+	_c.Call.Return(run)
+	return _c
 }
 
 // GetClassBookingSchedules provides a mock function for the type MockStorage
@@ -103,6 +234,78 @@ func (_c *MockStorage_GetClassBookingSchedules_Call) Return(classBookingSchedule
 }
 
 func (_c *MockStorage_GetClassBookingSchedules_Call) RunAndReturn(run func(ctx context.Context, chatID int64) ([]models.ClassBookingSchedule, bool)) *MockStorage_GetClassBookingSchedules_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetSession provides a mock function for the type MockStorage
+func (_mock *MockStorage) GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error) {
+	ret := _mock.Called(ctx, chatID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetSession")
+	}
+
+	var r0 models.StoredSession
+	var r1 bool
+	var r2 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64) (models.StoredSession, bool, error)); ok {
+		return returnFunc(ctx, chatID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64) models.StoredSession); ok {
+		r0 = returnFunc(ctx, chatID)
+	} else {
+		r0 = ret.Get(0).(models.StoredSession)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, int64) bool); ok {
+		r1 = returnFunc(ctx, chatID)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, int64) error); ok {
+		r2 = returnFunc(ctx, chatID)
+	} else {
+		r2 = ret.Error(2)
+	}
+	return r0, r1, r2
+}
+
+// MockStorage_GetSession_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetSession'
+type MockStorage_GetSession_Call struct {
+	*mock.Call
+}
+
+// GetSession is a helper method to define mock.On call
+//   - ctx context.Context
+//   - chatID int64
+func (_e *MockStorage_Expecter) GetSession(ctx interface{}, chatID interface{}) *MockStorage_GetSession_Call {
+	return &MockStorage_GetSession_Call{Call: _e.mock.On("GetSession", ctx, chatID)}
+}
+
+func (_c *MockStorage_GetSession_Call) Run(run func(ctx context.Context, chatID int64)) *MockStorage_GetSession_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 int64
+		if args[1] != nil {
+			arg1 = args[1].(int64)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStorage_GetSession_Call) Return(storedSession models.StoredSession, b bool, err error) *MockStorage_GetSession_Call {
+	_c.Call.Return(storedSession, b, err)
+	return _c
+}
+
+func (_c *MockStorage_GetSession_Call) RunAndReturn(run func(ctx context.Context, chatID int64) (models.StoredSession, bool, error)) *MockStorage_GetSession_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -235,6 +438,78 @@ func (_c *MockStorage_ListUsers_Call) RunAndReturn(run func(ctx context.Context)
 	return _c
 }
 
+// ReplaceSession provides a mock function for the type MockStorage
+func (_mock *MockStorage) ReplaceSession(ctx context.Context, prevUpdatedAt time.Time, s models.StoredSession) (bool, error) {
+	ret := _mock.Called(ctx, prevUpdatedAt, s)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ReplaceSession")
+	}
+
+	var r0 bool
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, time.Time, models.StoredSession) (bool, error)); ok {
+		return returnFunc(ctx, prevUpdatedAt, s)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, time.Time, models.StoredSession) bool); ok {
+		r0 = returnFunc(ctx, prevUpdatedAt, s)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, time.Time, models.StoredSession) error); ok {
+		r1 = returnFunc(ctx, prevUpdatedAt, s)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockStorage_ReplaceSession_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ReplaceSession'
+type MockStorage_ReplaceSession_Call struct {
+	*mock.Call
+}
+
+// ReplaceSession is a helper method to define mock.On call
+//   - ctx context.Context
+//   - prevUpdatedAt time.Time
+//   - s models.StoredSession
+func (_e *MockStorage_Expecter) ReplaceSession(ctx interface{}, prevUpdatedAt interface{}, s interface{}) *MockStorage_ReplaceSession_Call {
+	return &MockStorage_ReplaceSession_Call{Call: _e.mock.On("ReplaceSession", ctx, prevUpdatedAt, s)}
+}
+
+func (_c *MockStorage_ReplaceSession_Call) Run(run func(ctx context.Context, prevUpdatedAt time.Time, s models.StoredSession)) *MockStorage_ReplaceSession_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 time.Time
+		if args[1] != nil {
+			arg1 = args[1].(time.Time)
+		}
+		var arg2 models.StoredSession
+		if args[2] != nil {
+			arg2 = args[2].(models.StoredSession)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStorage_ReplaceSession_Call) Return(b bool, err error) *MockStorage_ReplaceSession_Call {
+	_c.Call.Return(b, err)
+	return _c
+}
+
+func (_c *MockStorage_ReplaceSession_Call) RunAndReturn(run func(ctx context.Context, prevUpdatedAt time.Time, s models.StoredSession) (bool, error)) *MockStorage_ReplaceSession_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SaveBookingAttempt provides a mock function for the type MockStorage
 func (_mock *MockStorage) SaveBookingAttempt(ctx context.Context, attempt models.BookingAttempt) error {
 	ret := _mock.Called(ctx, attempt)
@@ -351,6 +626,63 @@ func (_c *MockStorage_SaveClassBookingSchedule_Call) Return(err error) *MockStor
 }
 
 func (_c *MockStorage_SaveClassBookingSchedule_Call) RunAndReturn(run func(ctx context.Context, chatID int64, class models.ClassBookingSchedule) error) *MockStorage_SaveClassBookingSchedule_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SaveSession provides a mock function for the type MockStorage
+func (_mock *MockStorage) SaveSession(ctx context.Context, s models.StoredSession) error {
+	ret := _mock.Called(ctx, s)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SaveSession")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, models.StoredSession) error); ok {
+		r0 = returnFunc(ctx, s)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockStorage_SaveSession_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveSession'
+type MockStorage_SaveSession_Call struct {
+	*mock.Call
+}
+
+// SaveSession is a helper method to define mock.On call
+//   - ctx context.Context
+//   - s models.StoredSession
+func (_e *MockStorage_Expecter) SaveSession(ctx interface{}, s interface{}) *MockStorage_SaveSession_Call {
+	return &MockStorage_SaveSession_Call{Call: _e.mock.On("SaveSession", ctx, s)}
+}
+
+func (_c *MockStorage_SaveSession_Call) Run(run func(ctx context.Context, s models.StoredSession)) *MockStorage_SaveSession_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 models.StoredSession
+		if args[1] != nil {
+			arg1 = args[1].(models.StoredSession)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStorage_SaveSession_Call) Return(err error) *MockStorage_SaveSession_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockStorage_SaveSession_Call) RunAndReturn(run func(ctx context.Context, s models.StoredSession) error) *MockStorage_SaveSession_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -509,20 +841,29 @@ func (_m *MockBooker) EXPECT() *MockBooker_Expecter {
 }
 
 // Authenticate provides a mock function for the type MockBooker
-func (_mock *MockBooker) Authenticate(ctx context.Context, email string, password string) error {
+func (_mock *MockBooker) Authenticate(ctx context.Context, email string, password string) (wodbuster.Session, error) {
 	ret := _mock.Called(ctx, email, password)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Authenticate")
 	}
 
-	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) error); ok {
+	var r0 wodbuster.Session
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (wodbuster.Session, error)); ok {
+		return returnFunc(ctx, email, password)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) wodbuster.Session); ok {
 		r0 = returnFunc(ctx, email, password)
 	} else {
-		r0 = ret.Error(0)
+		r0 = ret.Get(0).(wodbuster.Session)
 	}
-	return r0
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = returnFunc(ctx, email, password)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
 }
 
 // MockBooker_Authenticate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Authenticate'
@@ -561,12 +902,156 @@ func (_c *MockBooker_Authenticate_Call) Run(run func(ctx context.Context, email 
 	return _c
 }
 
-func (_c *MockBooker_Authenticate_Call) Return(err error) *MockBooker_Authenticate_Call {
-	_c.Call.Return(err)
+func (_c *MockBooker_Authenticate_Call) Return(session wodbuster.Session, err error) *MockBooker_Authenticate_Call {
+	_c.Call.Return(session, err)
 	return _c
 }
 
-func (_c *MockBooker_Authenticate_Call) RunAndReturn(run func(ctx context.Context, email string, password string) error) *MockBooker_Authenticate_Call {
+func (_c *MockBooker_Authenticate_Call) RunAndReturn(run func(ctx context.Context, email string, password string) (wodbuster.Session, error)) *MockBooker_Authenticate_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// CheckSession provides a mock function for the type MockBooker
+func (_mock *MockBooker) CheckSession(ctx context.Context, sess wodbuster.Session) (wodbuster.Session, error) {
+	ret := _mock.Called(ctx, sess)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CheckSession")
+	}
+
+	var r0 wodbuster.Session
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, wodbuster.Session) (wodbuster.Session, error)); ok {
+		return returnFunc(ctx, sess)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, wodbuster.Session) wodbuster.Session); ok {
+		r0 = returnFunc(ctx, sess)
+	} else {
+		r0 = ret.Get(0).(wodbuster.Session)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, wodbuster.Session) error); ok {
+		r1 = returnFunc(ctx, sess)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockBooker_CheckSession_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CheckSession'
+type MockBooker_CheckSession_Call struct {
+	*mock.Call
+}
+
+// CheckSession is a helper method to define mock.On call
+//   - ctx context.Context
+//   - sess wodbuster.Session
+func (_e *MockBooker_Expecter) CheckSession(ctx interface{}, sess interface{}) *MockBooker_CheckSession_Call {
+	return &MockBooker_CheckSession_Call{Call: _e.mock.On("CheckSession", ctx, sess)}
+}
+
+func (_c *MockBooker_CheckSession_Call) Run(run func(ctx context.Context, sess wodbuster.Session)) *MockBooker_CheckSession_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 wodbuster.Session
+		if args[1] != nil {
+			arg1 = args[1].(wodbuster.Session)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockBooker_CheckSession_Call) Return(session wodbuster.Session, err error) *MockBooker_CheckSession_Call {
+	_c.Call.Return(session, err)
+	return _c
+}
+
+func (_c *MockBooker_CheckSession_Call) RunAndReturn(run func(ctx context.Context, sess wodbuster.Session) (wodbuster.Session, error)) *MockBooker_CheckSession_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Login provides a mock function for the type MockBooker
+func (_mock *MockBooker) Login(ctx context.Context, email string, password string, onRetry booking.LoginRetryFunc) (wodbuster.Session, error) {
+	ret := _mock.Called(ctx, email, password, onRetry)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Login")
+	}
+
+	var r0 wodbuster.Session
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, booking.LoginRetryFunc) (wodbuster.Session, error)); ok {
+		return returnFunc(ctx, email, password, onRetry)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, booking.LoginRetryFunc) wodbuster.Session); ok {
+		r0 = returnFunc(ctx, email, password, onRetry)
+	} else {
+		r0 = ret.Get(0).(wodbuster.Session)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string, booking.LoginRetryFunc) error); ok {
+		r1 = returnFunc(ctx, email, password, onRetry)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockBooker_Login_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Login'
+type MockBooker_Login_Call struct {
+	*mock.Call
+}
+
+// Login is a helper method to define mock.On call
+//   - ctx context.Context
+//   - email string
+//   - password string
+//   - onRetry booking.LoginRetryFunc
+func (_e *MockBooker_Expecter) Login(ctx interface{}, email interface{}, password interface{}, onRetry interface{}) *MockBooker_Login_Call {
+	return &MockBooker_Login_Call{Call: _e.mock.On("Login", ctx, email, password, onRetry)}
+}
+
+func (_c *MockBooker_Login_Call) Run(run func(ctx context.Context, email string, password string, onRetry booking.LoginRetryFunc)) *MockBooker_Login_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		var arg3 booking.LoginRetryFunc
+		if args[3] != nil {
+			arg3 = args[3].(booking.LoginRetryFunc)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *MockBooker_Login_Call) Return(session wodbuster.Session, err error) *MockBooker_Login_Call {
+	_c.Call.Return(session, err)
+	return _c
+}
+
+func (_c *MockBooker_Login_Call) RunAndReturn(run func(ctx context.Context, email string, password string, onRetry booking.LoginRetryFunc) (wodbuster.Session, error)) *MockBooker_Login_Call {
 	_c.Call.Return(run)
 	return _c
 }

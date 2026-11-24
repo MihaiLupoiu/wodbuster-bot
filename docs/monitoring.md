@@ -43,7 +43,7 @@ The system's purpose. Without these, "it works" is an anecdote.
 | `wodbuster_bot_booking_outcomes_total` | Counter | `outcome`, `weekday`, `class` | The headline number: classes booked per week versus classes targeted. |
 | `wodbuster_bot_booking_latency_seconds` | Histogram | — | Time from the opening to the place being taken. On 2026-09-27 this was 497ms, 520ms and 833ms. If it drifts towards seconds, places start being lost to faster athletes. Buckets want to be fine-grained and low: 0.1 to 5s. |
 | `wodbuster_bot_booking_attempts` | Histogram | — | How many calls it took. Three classes collided with each other that same day; the histogram is where that shows up as a distribution rather than a log line. |
-| `wodbuster_bot_booking_failures_total` | Counter | `reason` (full, quota, not-included, busy, session-expired, api-error, not-published) | The `classify` sentinels, as a metric. "Failed because the class was full" and "failed because the login broke" need opposite reactions, and today both are one red line in a log. |
+| `wodbuster_bot_booking_failures_total` | Counter | `reason` (full, quota, not_included, busy, session_expired, challenge, class_not_found, not_published, login, timeout, error; see `failureReason`) | The `classify` sentinels, as a metric. "Failed because the class was full" and "failed because the login broke" need opposite reactions, and today both are one red line in a log. |
 
 ## Tier 3 — WodBuster itself
 
@@ -58,6 +58,32 @@ The dependency most likely to change under us.
 | `wodbuster_bot_login_control_drift_total` | Counter | `route` (id, value, label) | Early warning that WodBuster's DOM moved. `browserauth` already falls back from id to value to label and logs a warning; as a counter it is an alert instead of a line nobody reads. This would have caught the 2026-09-18 breakage before the opening. |
 | `wodbuster_bot_server_clock_offset_seconds` | Gauge | — | We book against the server's clock. A growing offset means our timing is quietly wrong. |
 | `wodbuster_bot_day_unpublished_total` | Counter | `weekday` | Distinguishes "the box has not published yet" from "the box is closed that day" — the ambiguity in `todo.md` item 7 that made Friday 9 October look like a bug. |
+
+## Tier 3b — stored sessions
+
+The browser login has been the cause of every outage so far (2026-10-14,
+2026-10-18, 2026-11-15). Stored sessions move it off the critical path, and
+these metrics are how we learn whether a stored session can be trusted: the
+probe of 2026-11-16 proved 31 hours in use and 16 hours idle, nothing longer.
+All of them live in `internal/telegram/usecase/metrics.go`.
+
+| Metric | Type | Labels | Why |
+|---|---|---|---|
+| `wodbuster_bot_session_checks_total` | Counter | `source` (refresh, preflight), `result` (ok, expired, challenge, inconclusive, unreadable) | Every check of a stored session. `expired` is WodBuster refusing it; `challenge` and `inconclusive` taught us nothing and keep the session. |
+| `wodbuster_bot_session_age_at_failure_seconds` | Histogram | `source`, `reason` | Time from the browser login to the refusal: the measured lifetime of a session. Buckets 1h to 45d. |
+| `wodbuster_bot_session_idle_at_failure_seconds` | Histogram | `source`, `reason` | Time since the session was last accepted: the idle gap it did not survive. With the refresh every 12h this should stay under 12h; a failure above that means the refresh did not run. |
+| `wodbuster_bot_session_oldest_login_timestamp_seconds` | Gauge | — | Unix time of the login of the oldest stored session of an active athlete (0 with none), read from the store at startup and after every refresh, preflight, run, `/login`, `/test` and `/disable`. `time() -` this is the oldest session's age; climbing week after week is the good news: sessions really do last. A timestamp, not an age, so it cannot freeze when nothing updates it. |
+| `wodbuster_bot_session_auth_expiry_timestamp_seconds` | Gauge | `chat_id` | Unix time each stored `.WBAuth` expires; absent for a session cookie. Each use pushes it back to 45 days out. The `chat_id` label breaks the bounded-label rule on purpose: a handful of athletes, and the series is removed with the session the next time the gauges are read. |
+| `wodbuster_bot_sessions_stored` | Gauge | — | Active athletes with a stored session, read from the store as above. A database error leaves the gauges as they were rather than dropping athletes. |
+| `wodbuster_bot_session_refresh_last_success_timestamp_seconds` | Gauge | — | Unix time of the last refresh that went through every athlete. One cut short by the run, a shutdown or its 20-minute budget does not count. |
+| `wodbuster_bot_session_reuse_mode` | Gauge | `mode` (off, shadow) | 1 for the configured `SESSION_REUSE`. With `off` nothing is stored and the session gauges are never set, so alerts 7–10 join on `mode!="off"` to stay quiet. |
+| `wodbuster_bot_session_reuse_total` | Counter | `phase` (shadow, live), `result` | The Sunday answer, one per athlete. Preflight: `would_work`, `would_fail`, `inconclusive`, `missing` for the days-old session. Run: `used` (booked with the stored session) or `fallback` (had to log in). In shadow mode `would_work` versus `would_fail` is the evidence for going live. |
+| `wodbuster_bot_preflight_total` | Counter | `result` (all_ok, partial, failed, nobody) | Sunday 11:00 preflights; `nobody` is a Sunday with no athlete to book for, recorded so an alert on "no preflight this week" stays quiet. `failed` with every athlete failing is 2026-11-15 again, found 50 minutes earlier. |
+
+Log lines to search for: `session refused` (from the refresh and the preflight's shadow check, with `source`, `age`, `idle`, `logged_in_at`,
+`last_used_at`, `auth_expires_at`, `trusted_device`), `shadow check`,
+`preflight done`, `lost session replaced by a new login`, and
+`session renewed` at debug. None of them carries a cookie value.
 
 ## Tier 4 — infrastructure
 
@@ -114,6 +140,29 @@ in this deployment:
 4. **Login failures** — any, over a 1h window.
 5. **Mongo commands failing** — `rate(mongo_operations_total{stat="failed"}[5m]) > 0`.
 6. **Telegram updates erroring** for more than a few minutes.
+7. **Stored sessions keep being refused** —
+   `increase(wodbuster_bot_session_checks_total{source="refresh",result="expired"}[25h]) >= 2`.
+   The bot already messages the admins when a refused session cannot be
+   replaced by a login; this catches sessions dying faster than expected even
+   when the re-login works. The metric has no athlete label, so it fires for two
+   refusals across everyone; the `session refused` log lines say whose.
+8. **An active athlete has no session on Saturday evening** —
+   `wodbuster_bot_sessions_stored` below the number of active athletes with
+   classes, checked Saturday 20:00, `and on() wodbuster_bot_session_reuse_mode{mode!="off"} == 1`.
+   The preflight logs everyone in anyway, so this is a warning, not a page.
+9. **A `.WBAuth` within 7 days of expiry** —
+   `wodbuster_bot_session_auth_expiry_timestamp_seconds - time() < 7 * 86400`.
+   Every refresh pushes it back to 45 days, so this means the refresh has
+   stopped renewing it.
+9b. **The refresh has not gone through in 26 hours** —
+   `time() - wodbuster_bot_session_refresh_last_success_timestamp_seconds > 93600
+   and on() wodbuster_bot_session_reuse_mode{mode!="off"} == 1`. Two refreshes
+   a day, so this is two missed in a row; alert 9 would only notice weeks later.
+10. **The Sunday preflight did not finish clean** —
+    `increase(wodbuster_bot_preflight_total{result=~"partial|failed"}[2h]) > 0`. The
+    admins get the summary in Telegram too.
+11. *(phase 2 only)* **A run fell back to the browser** —
+    `increase(wodbuster_bot_session_reuse_total{phase="live",result="fallback"}[1h]) > 0`.
 
 Alerts 1 and 2 are the ones that matter most, because they fire when the bot
 does nothing — which is the failure mode that looks exactly like success.

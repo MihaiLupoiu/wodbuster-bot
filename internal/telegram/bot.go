@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -30,6 +31,10 @@ type BotManager interface {
 	Rehearse(ctx context.Context, chatID int64) ([]booking.Outcome, error)
 	ListUsers(ctx context.Context) ([]models.User, error)
 	SetUserStatus(ctx context.Context, chatID int64, status string) (models.User, error)
+	GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error)
+	// StoresSessions is false with SESSION_REUSE=off, when no athlete has a
+	// stored session and none is expected.
+	StoresSessions() bool
 }
 
 type Bot struct {
@@ -41,6 +46,7 @@ type Bot struct {
 	bookHandler  *handlers.BookingHandler
 	nameCheck    *nameChecker
 	rateLimiter  *utils.RateLimiter
+	loc          *time.Location
 	stopChan     chan struct{}
 	// removeHandler *handlers.RemoveHandler
 }
@@ -52,13 +58,27 @@ func (b *Bot) WithMetrics(m *Metrics) *Bot {
 	return b
 }
 
+// WithLocation sets the gym's time zone, in which /status gives dates.
+// Optional: without it dates are in UTC.
+func (b *Bot) WithLocation(loc *time.Location) *Bot {
+	b.loc = loc
+	return b
+}
+
+// pollTimeout is how long, in seconds, a getUpdates long poll waits for an
+// update. apiTimeout bounds every Telegram API call, and so must outlast it.
+const (
+	pollTimeout = 60
+	apiTimeout  = pollTimeout*time.Second + 10*time.Second
+)
+
 func New(token string, manager BotManager, logger *slog.Logger) (*Bot, error) {
 	// The library logs on its own — a dropped long poll, with the request URL,
 	// which carries the token. Through our logger those lines are JSON and get
 	// the same redaction as everything else, instead of going raw to stderr.
 	_ = tgbotapi.SetLogger(logging.PrintLogger{Log: logger, Level: slog.LevelWarn, Msg: "telegram api"})
 
-	api, err := tgbotapi.NewBotAPI(token)
+	api, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, &http.Client{Timeout: apiTimeout})
 	if err != nil {
 		switch err.Error() {
 		case "Not Found", "Unauthorized":
@@ -104,7 +124,7 @@ func (b *Bot) Start() error {
 	b.stopChan = make(chan struct{})
 
 	updateConfig := tgbotapi.NewUpdate(0)
-	updateConfig.Timeout = 60
+	updateConfig.Timeout = pollTimeout
 
 	updates := b.api.GetUpdatesChan(updateConfig)
 
@@ -223,7 +243,7 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 		help := "🤖 **WODBuster Bot Commands**\n\n" +
 			"**Authentication:**\n" +
 			"• `/login email password` - Login to WODBuster\n" +
-			"• `/test` - Test your current session\n\n" +
+			"• `/test` - Test your WodBuster login\n\n" +
 			"**Booking:**\n" +
 			"• `/book day hour class` - Add a class to your weekly schedule\n" +
 			"  Example: `/book Monday 10:00 wod` or `/book Friday 17:30 open box`\n" +
@@ -252,7 +272,8 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 }
 
 func (b *Bot) handleStatus(update tgbotapi.Update) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), storeTimeout)
+	defer cancel()
 	chatID := update.Message.Chat.ID
 
 	user, exists := b.manager.GetUser(ctx, chatID)
@@ -268,9 +289,15 @@ func (b *Bot) handleStatus(update tgbotapi.Update) {
 
 	scheduleCount := len(user.ClassBookingSchedules)
 
+	st, hasSession, err := b.manager.GetSession(ctx, chatID)
+	if err != nil {
+		b.logger.Error("could not read the stored session", "chat_id", chatID, "err", err)
+	}
+
 	message := "📊 **Your Status**\n\n" +
 		"Account: " + statusLine(user) + "\n" +
 		"Authentication: " + status + "\n" +
+		"WodBuster session: " + sessionLine(st, hasSession, err, time.Now(), b.loc) + "\n" +
 		"Email: " + user.Email + "\n" +
 		"Scheduled Classes: " + fmt.Sprintf("%d", scheduleCount) + "\n\n"
 
@@ -325,19 +352,19 @@ func (b *Bot) handleTestSession(update tgbotapi.Update) {
 		return
 	}
 
-	b.sendMessage(chatID, "🧪 Testing your session...")
+	b.sendMessage(chatID, "🧪 Testing your WodBuster login...")
 
 	if err := b.manager.TestUserSession(ctx, chatID); err != nil {
 		// Plain text: the error carries "login_page", and in Markdown its
 		// underscore made Telegram drop this very message on 2026-11-15.
-		b.Notify(chatID, "❌ Session test failed: "+err.Error()+
+		b.Notify(chatID, "❌ Login test failed: "+err.Error()+
 			"\nIf you changed your WodBuster password, use /login again. Otherwise it is "+
 			"probably WodBuster's side; the admin has been told.")
 		b.reportFailure(chatID, "/test", err)
 		return
 	}
 
-	b.sendMessage(chatID, "✅ Your session is working correctly!")
+	b.sendMessage(chatID, "✅ Your WodBuster login works.")
 }
 
 func (b *Bot) handleActiveBookings(update tgbotapi.Update) {

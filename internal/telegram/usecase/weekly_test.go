@@ -16,6 +16,7 @@ import (
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/storage"
+	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
 )
 
 // recordingBooker books whatever it is given and remembers who asked, so a
@@ -25,7 +26,18 @@ type recordingBooker struct {
 	calls map[string]int // email -> runs
 }
 
-func (b *recordingBooker) Authenticate(context.Context, string, string) error { return nil }
+func (b *recordingBooker) Authenticate(context.Context, string, string) (wodbuster.Session, error) {
+	return wodbuster.Session{}, nil
+}
+
+func (b *recordingBooker) Login(context.Context, string, string,
+	booking.LoginRetryFunc) (wodbuster.Session, error) {
+	return wodbuster.Session{}, nil
+}
+
+func (b *recordingBooker) CheckSession(_ context.Context, s wodbuster.Session) (wodbuster.Session, error) {
+	return s, nil
+}
 
 func (b *recordingBooker) Run(_ context.Context, email, _ string, targets []booking.Target,
 	_ booking.RunOptions) ([]booking.Outcome, error) {

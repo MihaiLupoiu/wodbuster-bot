@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"time"
@@ -23,6 +23,7 @@ type Client struct {
 	http      *http.Client
 	base      string
 	session   Session
+	jar       *recordingJar
 	userAgent string
 	log       *slog.Logger
 
@@ -92,11 +93,12 @@ func NewClient(s Session, opts ...Option) (*Client, error) {
 			},
 		}
 	}
-	jar, err := cookiejar.New(nil)
+	jar, err := newRecordingJar()
 	if err != nil {
 		return nil, err
 	}
 	hc.Jar = jar
+	// SetCookies is also what records the seed for Session.
 	jar.SetCookies(base, s.Cookies)
 	// The login happens on the parent domain; carry the cookies there too.
 	if parent, err := url.Parse("https://wodbuster.com"); err == nil {
@@ -107,14 +109,23 @@ func NewClient(s Session, opts ...Option) (*Client, error) {
 		http:      &hc,
 		base:      s.BaseURL(),
 		session:   s,
+		jar:       jar,
 		userAgent: cf.userAgent,
 		log:       cf.log,
 		booking:   make(chan struct{}, 1),
 	}, nil
 }
 
-// Session returns the session this client was built from.
-func (c *Client) Session() Session { return c.session }
+// Session returns the session as it stands now: the cookies this client was
+// built from, with every cookie the server has set since replacing its older
+// version. WodBuster renews .WBAuth on ordinary requests, so after a Ping the
+// returned session can outlive the one passed to NewClient. IssuedAt is left
+// alone: it stays the time of the login that minted the session.
+func (c *Client) Session() Session {
+	s := c.session
+	s.Cookies = c.jar.snapshot()
+	return s
+}
 
 // Box is the centre this client is bound to.
 func (c *Client) Box() string { return c.session.Box }
@@ -152,11 +163,16 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, *http.Response, 
 
 // looksLikeLogin spots the usual shape of an expired session: the handler
 // answers with the login page (or a redirect to it) instead of JSON.
+//
+// A 403 alone is not enough: a Cloudflare "Access denied" page or a WAF block
+// answers 403 too, and calling that an expired session makes the bot throw
+// away a good one and log in again. A 403 counts only with the login page in
+// it, which the checks below find.
 func looksLikeLogin(resp *http.Response, body []byte) bool {
 	if resp == nil {
 		return false
 	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return true
 	}
 	if loc := resp.Header.Get("Location"); strings.Contains(strings.ToLower(loc), "login") {
@@ -165,14 +181,52 @@ func looksLikeLogin(resp *http.Response, body []byte) bool {
 	if strings.Contains(strings.ToLower(resp.Request.URL.Path), "login") {
 		return true
 	}
+	if isJSONOK(resp) {
+		return false
+	}
 	head := strings.ToLower(string(body[:min(len(body), 2048)]))
 	return strings.Contains(head, "<html") && strings.Contains(head, "login")
+}
+
+// looksLikeChallenge spots a Cloudflare challenge page: the cf-mitigated header,
+// or the interstitial's title. It says nothing about the session, which may
+// well still be good.
+func looksLikeChallenge(resp *http.Response, body []byte) bool {
+	if resp == nil {
+		return false
+	}
+	if resp.Header.Get("Cf-Mitigated") != "" {
+		return true
+	}
+	if isJSONOK(resp) {
+		return false
+	}
+	head := strings.ToLower(string(body[:min(len(body), 4096)]))
+	return strings.Contains(head, "<title>just a moment") ||
+		strings.Contains(head, "<title>attention required")
+}
+
+// isJSONOK reports a 200 that says it is JSON: how every handler answers when
+// all is well. Neither a login page nor a Cloudflare interstitial comes that
+// way, so the body scans above can skip it instead of lowercasing a copy of
+// every successful response.
+func isJSONOK(resp *http.Response) bool {
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	return err == nil && (mt == "application/json" || strings.HasSuffix(mt, "+json"))
 }
 
 func (c *Client) getJSON(ctx context.Context, op, path string, out any) error {
 	body, resp, err := c.get(ctx, path)
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
+	}
+	// Challenge first: Cloudflare answers 403, which looksLikeLogin would
+	// otherwise call an expired session.
+	if looksLikeChallenge(resp, body) {
+		return fmt.Errorf("%s: %w", op, ErrChallenge)
 	}
 	if looksLikeLogin(resp, body) {
 		return fmt.Errorf("%s: %w", op, ErrSessionExpired)
@@ -276,13 +330,6 @@ func (c *Client) ServerTime(ctx context.Context) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("ServerTime: unreadable Date header %q: %w", h, err)
 	}
 	return t, nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 type discardHandler struct{}

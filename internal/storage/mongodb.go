@@ -22,6 +22,7 @@ type MongoStorage struct {
 	database           *mongo.Database
 	usersCollection    *mongo.Collection
 	bookingsCollection *mongo.Collection
+	sessionsCollection *mongo.Collection
 }
 
 // NewMongoStorage connects without metrics. Prefer NewMongoStorageWithMetrics.
@@ -61,12 +62,24 @@ func NewMongoStorageWithMetrics(uri, dbName string, m *MongoMetrics) (*MongoStor
 	database := client.Database(dbName)
 	usersCollection := database.Collection("users")
 	bookingsCollection := database.Collection("booking_attempts")
+	sessionsCollection := database.Collection("sessions")
+
+	// One session per athlete. Creating an index that already exists is a
+	// no-op, so this is safe on every start.
+	if _, err := sessionsCollection.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "chat_id", Value: 1}},
+		Options: options.Index().SetUnique(true).SetName("chat_id_unique"),
+	}); err != nil {
+		_ = client.Disconnect(context.Background())
+		return nil, fmt.Errorf("could not create the sessions index: %w", err)
+	}
 
 	return &MongoStorage{
 		client:             client,
 		database:           database,
 		usersCollection:    usersCollection,
 		bookingsCollection: bookingsCollection,
+		sessionsCollection: sessionsCollection,
 	}, nil
 }
 
@@ -186,4 +199,63 @@ func (m *MongoStorage) UpdateBookingStatus(ctx context.Context, attemptID string
 	}
 
 	return nil
+}
+
+// SaveSession stores the athlete's session, replacing any older one. Only the
+// session document is written; the user is not touched.
+func (m *MongoStorage) SaveSession(ctx context.Context, s models.StoredSession) error {
+	s.UpdatedAt = sessionStamp()
+	_, err := m.sessionsCollection.ReplaceOne(ctx,
+		bson.M{"chat_id": s.ChatID}, s, options.Replace().SetUpsert(true))
+	if err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
+	}
+	return nil
+}
+
+// GetSession returns the athlete's stored session. A missing one is not an
+// error: ok is false. An error means the database could not answer, which the
+// caller must not mistake for "no session".
+func (m *MongoStorage) GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error) {
+	var s models.StoredSession
+	err := m.sessionsCollection.FindOne(ctx, bson.M{"chat_id": chatID}).Decode(&s)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return models.StoredSession{}, false, nil
+	}
+	if err != nil {
+		return models.StoredSession{}, false, fmt.Errorf("failed to read session: %w", err)
+	}
+	return s, true, nil
+}
+
+// DeleteSession forgets the athlete's session. Deleting one that is not there
+// is fine.
+func (m *MongoStorage) DeleteSession(ctx context.Context, chatID int64) error {
+	if _, err := m.sessionsCollection.DeleteOne(ctx, bson.M{"chat_id": chatID}); err != nil {
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
+	return nil
+}
+
+// ReplaceSession stores s only if the stored session is still the one whose
+// UpdatedAt was prevUpdatedAt. ok is false when it changed or is gone: someone
+// else wrote it in between, and their write stands. prevUpdatedAt must come
+// from GetSession, so it carries Mongo's millisecond precision.
+func (m *MongoStorage) ReplaceSession(ctx context.Context, prevUpdatedAt time.Time, s models.StoredSession) (bool, error) {
+	s.UpdatedAt = sessionStamp()
+	res, err := m.sessionsCollection.ReplaceOne(ctx,
+		bson.M{"chat_id": s.ChatID, "updated_at": prevUpdatedAt}, s)
+	if err != nil {
+		return false, fmt.Errorf("failed to replace session: %w", err)
+	}
+	return res.MatchedCount == 1, nil
+}
+
+// DeleteSessionIfUnchanged is DeleteSession with ReplaceSession's condition.
+func (m *MongoStorage) DeleteSessionIfUnchanged(ctx context.Context, chatID int64, prevUpdatedAt time.Time) (bool, error) {
+	res, err := m.sessionsCollection.DeleteOne(ctx, bson.M{"chat_id": chatID, "updated_at": prevUpdatedAt})
+	if err != nil {
+		return false, fmt.Errorf("failed to delete session: %w", err)
+	}
+	return res.DeletedCount == 1, nil
 }

@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ func TestFailureReason(t *testing.T) {
 		"not included":  {wodbuster.ErrNotIncluded, "not_included"},
 		"busy":          {wodbuster.ErrBusy, "busy"},
 		"session":       {wodbuster.ErrSessionExpired, "session_expired"},
+		"challenge":     {fmt.Errorf("Schedule: %w", wodbuster.ErrChallenge), "challenge"},
 		"wrapped":       {errors.Join(errors.New("Book"), wodbuster.ErrClassFull), "full"},
 		"not published": {errors.New("race: day never published"), "not_published"},
 		"login":         {errors.New("login failed: browserauth: ..."), "login"},

@@ -7,7 +7,7 @@ A Telegram bot that automatically books fitness classes on WODBuster the moment 
 - 🔐 **Secure Authentication**: Login with your WODBuster credentials (encrypted storage)
 - 📅 **Automated Booking**: Schedule classes to be booked automatically
 - ⚡ **Multi-User Support**: Each user gets their own browser session for parallel booking
-- 🍪 **Session Persistence**: Remembers your login using WODBuster session cookie
+- 🍪 **Stored sessions**: Keeps each athlete's WodBuster session (encrypted), refreshed every 12 hours, and logs everyone in an hour before the opening so a broken login shows up with time to spare
 - ⏰ **Weekly run**: Wakes up ten minutes before the opening, logs in, syncs with the server's clock, and books the instant the week is published
 - 🧪 **Session Testing**: Verify your login status anytime
 - 📊 **Status Monitoring**: Track your scheduled classes and booking attempts
@@ -122,7 +122,7 @@ Create a `.env` file with the following variables:
 # Required
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token-here
 WODBUSTER_URL=https://wodbuster.com
-ENCRYPTION_KEY=your-32-character-encryption-key-here
+ENCRYPTION_KEY=change-me-to-32-random-bytes!!!!    # exactly 16, 24 or 32 bytes
 
 # Storage (optional, defaults to memory)
 STORAGE_TYPE=mongodb
@@ -133,7 +133,28 @@ MONGO_DB=wodbuster
 LOG_LEVEL=info
 HEALTH_CHECK_PORT=8080
 VERSION=1.0.0
+
+# Stored sessions (defaults shown)
+WODBUSTER_TRUST_DEVICE=true            # log in with "remember this device"
+SESSION_REFRESH_CRON=0 3,15 * * *      # check and renew stored sessions; empty = off
+SESSION_PREFLIGHT_CRON=0 11 * * 0      # Sunday preflight login; empty = off
+SESSION_REUSE=shadow                   # off = no stored sessions, log in at 11:50 as before; shadow (see below)
+SESSION_PREFLIGHT_ALL_OK_MESSAGE=true  # false = admins hear from the preflight only when something failed
 ```
+
+Cron specs are in `WODBUSTER_TIMEZONE`. `SESSION_REUSE=live` is refused at
+startup: it is phase 2 of the plan and not built yet. `SESSION_REUSE=off`
+switches the whole feature off: no refresh, no preflight, `/login`, `/test`
+and the daily login check store nothing, logins answer "just once" whatever
+`WODBUSTER_TRUST_DEVICE` says, and the sessions stored during shadow weeks are
+deleted at startup.
+
+The bot refuses to start on an `ENCRYPTION_KEY` that is not 16, 24 or 32
+bytes long. With `STORAGE_TYPE=mongodb` it also refuses the default key,
+because the database then holds passwords and session
+cookies sealed with a key anyone can read in this repository. It also creates a
+unique index on `sessions.chat_id` at startup, so its MongoDB user needs the
+`createIndex` privilege.
 
 ### Getting a Telegram Bot Token
 
@@ -165,9 +186,9 @@ db.users.updateOne({ chat_id: 6234638 }, { $set: { role: "admin", status: "activ
 
 ### Admin Commands
 
-- `/users` - Everyone, with status and number of classes, pending first
+- `/users` - Everyone, with status and number of classes, pending first; active users with no stored WodBuster session are marked `⚠️ no stored session`
 - `/approve chat_id` - Activate an account, or re-enable a disabled one
-- `/disable chat_id` - Switch an account off; nothing is booked for it
+- `/disable chat_id` - Switch an account off; nothing is booked for it, and its stored session is deleted
 - `/announcement text` - Send a plain-text message to every active user
 
 ### User Commands
@@ -175,7 +196,7 @@ db.users.updateOne({ chat_id: 6234638 }, { $set: { role: "admin", status: "activ
 **Authentication:**
 - `/start` - Welcome message and instructions
 - `/login email password` - Login with your WODBuster credentials
-- `/test` - Check that your stored credentials still log in
+- `/test` - Check that your stored credentials still log in; the session that login makes replaces the stored one
 - `/rehearse` - Resolve your classes against the published week, booking nothing
 
 **Booking:**
@@ -183,7 +204,7 @@ db.users.updateOne({ chat_id: 6234638 }, { $set: { role: "admin", status: "activ
   - Example: `/book Monday 10:00 wod`
   - Valid days: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday
   - Valid class types: wod, open, strength, cardio, yoga
-- `/status` - Show your account status and scheduled classes
+- `/status` - Show your account status, scheduled classes, and your stored WodBuster session (when WodBuster last accepted it, when its cookie expires)
 - `/active` - Show currently active booking attempts
 
 **Help:**
@@ -268,15 +289,53 @@ Full detail, including the exit codes and what a rehearsal still does not prove:
 
 ## ⏰ **How the weekly run works**
 
+**All week.** `/login` stores the WodBuster session it gets, for an approved
+account only (logged in with "remember this device", so the `.WBAuth` cookie
+lasts 45 days, moved forward on every use). Every 12 hours
+(`SESSION_REFRESH_CRON`, with a few minutes of random delay and 10–30s between
+athletes) the bot reads each active athlete's schedule once with their stored
+session. That keeps the session alive and stores the renewed cookie. A session
+WodBuster refuses is replaced by a fresh login (one try); if that login fails
+too, it is deleted and the admins are told. A failed login that is not a wrong
+password stops the logins for the rest of that refresh: WodBuster's login is
+then most likely broken for everyone, and the daily login check says so. A Cloudflare challenge, any other 403, or a
+network error keeps the session for the next try. A `/login` or `/disable`
+during the refresh always wins over it, and sessions left behind by accounts
+that are not active are deleted.
+
+**Sunday 11:00, the preflight** (`SESSION_PREFLIGHT_CRON`). For each athlete
+with classes, the bot checks whether the stored session would still work (and
+only records the answer, see below), then logs in with the browser exactly as
+the run does (3 tries, one login at a time, 20s apart) and stores that fresh
+session. The shadow checks are spread over the first 20 seconds rather than
+sent at once. The first failed try warns the athlete and the admins at about
+11:01 instead of 11:51; an athlete whose login still fails is told the 11:50
+run will try again. The admins get one summary when it ends
+(`SESSION_PREFLIGHT_ALL_OK_MESSAGE=false` keeps it to the weeks with trouble).
+The preflight has to finish by 11:50: the run stops it if it is still going,
+and a session refresh too, waiting up to 15 seconds for each before going
+ahead regardless.
+
+**Shadow mode** (`SESSION_REUSE=shadow`, the default) books only with a session
+logged in since this week's preflight started (or, after a restart that lost
+track of it, within the last two hours). The days-old stored
+session is checked at 11:00 and never booked with: the first weeks measure
+whether it would have worked (`session_reuse_total{phase="shadow"}`) before
+anything relies on it. `off` skips the preflight, the refresh and the stored
+sessions altogether and logs in at 11:50, as before.
+
 1. **Sunday 11:50** — the cronjob wakes up, ten minutes before the opening.
-2. One goroutine per athlete: each logs in with their own stored credentials
-   (a browser, 3–15s), then syncs with WodBuster's own clock.
+2. One goroutine per athlete: each one checks the session the preflight
+   stored with one request and uses it; only an athlete without a working
+   one logs in with the browser (3–15s). Then it syncs with WodBuster's own
+   clock.
 3. Each run reads the server's countdown and trusts it over the configured
    time when the two disagree by more than two seconds.
 4. **12:00** — the chase: poll until the week appears, then book, retrying
    anything that is not a flat "no" until the class fills up, then taking the
    waiting list.
-5. Results arrive in Telegram, per athlete.
+5. Results arrive in Telegram, per athlete, and the session the run ended
+   with is stored.
 
 Athletes do not slow each other down: WodBuster serialises booking calls per
 athlete, not globally. Within one athlete the client queues its own calls, which
@@ -335,13 +394,16 @@ default one, collectors built with `promauto.With(reg)`, and `Observe*` methods
 on a struct that callers hold. Nothing reads a package-level global, so a test
 builds its own registry and asserts on it.
 
-26 metrics across four packages: the weekly run (did it happen, how late, what
-it booked), WodBuster itself (requests, login, clock offset, control drift), the
-Mongo client (via the driver's own event monitors) and Telegram (commands,
-updates, replies). [`docs/monitoring.md`](docs/monitoring.md) lists them all
+The metrics cover the weekly run (did it happen, how late, what it booked),
+stored sessions (checks, how old a session was when it died, the Sunday
+preflight and shadow results), WodBuster itself (requests, login, clock offset,
+control drift), the Mongo client (via the driver's own event monitors) and
+Telegram (commands, updates, replies). [`docs/monitoring.md`](docs/monitoring.md) lists them all
 with the reasoning, and the alerts worth building on top. Adding a metric means adding a field to
-`metrics.Metrics` and an `Observe*` method beside it
-([`internal/metrics/metrics.go`](internal/metrics/metrics.go)).
+the owning package's `Metrics` struct and an `observe*` method beside it, for
+example [`internal/telegram/usecase/metrics.go`](internal/telegram/usecase/metrics.go)
+for the weekly run; the shared registry is in
+[`internal/platform/metrics`](internal/platform/metrics/prometheus.go).
 
 **On label cardinality.** The `command` label comes from a Telegram message,
 which means anyone can invent values, and every distinct value is a series
@@ -395,9 +457,8 @@ reproduces on demand: losing the race.
   "email": "user@example.com", 
   "password": "encrypted_password",
   "is_authenticated": true,
-  "wodbuster_session_cookie": "session_cookie_value",
-  "session_expires_at": "2023-12-10T12:00:00Z",
-  "session_valid": true,
+  "role": "user",
+  "status": "active",
   "class_booking_schedules": [
     {
       "id": "unique_id",
@@ -410,6 +471,27 @@ reproduces on demand: losing the race.
   "updated_at": "2023-12-01T10:00:00Z"
 }
 ```
+
+### Sessions Collection
+
+One document per athlete (unique index on `chat_id`), kept apart from the user
+so that a refresh every 12 hours never rewrites the profile.
+
+```json
+{
+  "chat_id": 123456789,
+  "encrypted": "AES-GCM of the whole session as JSON: box, athlete id, every cookie with its expiry",
+  "logged_in_at": "2026-11-16T15:05:00Z",
+  "last_used_at": "2026-11-18T03:02:41Z",
+  "auth_expires_at": "2027-01-02T03:02:41Z",
+  "trusted_device": true,
+  "updated_at": "2026-11-18T03:02:41Z"
+}
+```
+
+`logged_in_at` is the browser login that made the session; `last_used_at` the
+last request WodBuster accepted with it; `auth_expires_at` the `.WBAuth`
+cookie's expiry (absent for a cookie that ends with the browser session).
 
 ### Booking Attempts Collection
 ```json
@@ -434,7 +516,7 @@ reproduces on demand: losing the race.
 - **Session Isolation**: Each user gets dedicated browser context
 - **Rate Limiting**: Prevents command spam
 - **No Sensitive Data in Logs**: Credentials are never logged
-- **Secure Cookie Storage**: Only essential session cookie is stored
+- **Encrypted sessions**: A stored WodBuster session is a bearer credential, so it is encrypted with the same key as the password, never logged, and deleted when an account is disabled or a new `/login` replaces it
 
 ## 🐳 **Docker Support**
 

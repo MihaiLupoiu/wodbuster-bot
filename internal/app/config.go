@@ -1,6 +1,8 @@
 package app
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -40,10 +42,37 @@ type Config struct {
 	// this long after the previous one finished. Zero lets them run together.
 	LoginGap time.Duration `envconfig:"WODBUSTER_LOGIN_GAP" default:"20s"`
 
+	// TrustDevice makes logins answer "remember this device", so the session
+	// cookie gets a 45-day sliding expiry and a stored session lasts. False
+	// turns it off without a release. SESSION_REUSE=off turns it off too:
+	// with no session stored, a remembered device is only one more entry on
+	// the athlete's account.
+	TrustDevice bool `envconfig:"WODBUSTER_TRUST_DEVICE" default:"true"`
+
 	// LoginCheckCron is when the daily login check runs, in the gym's zone. It
 	// logs in with the first active admin's account. Empty turns it off; with
 	// no admin it does nothing.
 	LoginCheckCron string `envconfig:"LOGIN_CHECK_CRON" default:"0 10 * * *"`
+
+	// SessionRefreshCron is when stored WodBuster sessions are checked and
+	// renewed, in the gym's zone. Every 12 hours keeps each one inside the
+	// 16 idle hours a session has been seen to survive; 03:00 and 15:00 stay
+	// clear of Sunday's run. Empty turns it off.
+	SessionRefreshCron string `envconfig:"SESSION_REFRESH_CRON" default:"0 3,15 * * *"`
+
+	// SessionPreflightCron is when the Sunday preflight logs everyone in, an
+	// hour before the opening, so a broken login is found with time to react.
+	// Empty turns it off.
+	SessionPreflightCron string `envconfig:"SESSION_PREFLIGHT_CRON" default:"0 11 * * 0"`
+
+	// SessionReuse is off (log in at 11:50 as before, no preflight) or shadow
+	// (log in at 11:00, book with that session, and only check the days-old
+	// stored one). live is phase 2 and refused until it is built.
+	SessionReuse string `envconfig:"SESSION_REUSE" default:"shadow"`
+
+	// PreflightAllOKMessage sends the admins the preflight summary when every
+	// athlete logged in. false keeps them to the messages about trouble.
+	PreflightAllOKMessage bool `envconfig:"SESSION_PREFLIGHT_ALL_OK_MESSAGE" default:"true"`
 
 	// MongoDB configuration
 	MongoURI    string `envconfig:"MONGO_URI" default:"mongodb://localhost:27017"`
@@ -51,7 +80,8 @@ type Config struct {
 	StorageType string `envconfig:"STORAGE_TYPE" default:"memory"` // "memory" or "mongodb"
 
 	// Security configuration
-	EncryptionKey string `envconfig:"ENCRYPTION_KEY" default:"your-32-character-secret-key123"`
+	// The default is public and only for local runs with the memory store.
+	EncryptionKey string `envconfig:"ENCRYPTION_KEY" default:"local-dev-key-do-not-use-in-prod"`
 
 	// Health check configuration
 	HealthCheckPort string `envconfig:"HEALTH_CHECK_PORT" default:"8080"`
@@ -73,12 +103,13 @@ func NewConfig(envFile string) (*Config, error) {
 	return cfg, nil
 }
 
-// NewLogger is the JSON logger at the configured level, with the bot token and
-// the database password redacted from everything it writes. slog.SetDefault
+// NewLogger is the JSON logger at the configured level, with the bot token,
+// the database password and the encryption key redacted from everything it
+// writes. slog.SetDefault
 // on it also routes the standard log package through the same redaction.
 func (c *Config) NewLogger() *slog.Logger {
 	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: c.LoggerLevel})
-	redactor := logging.NewRedactor(c.TelegramToken, logging.URIPassword(c.MongoURI))
+	redactor := logging.NewRedactor(c.TelegramToken, logging.URIPassword(c.MongoURI), c.EncryptionKey)
 	return slog.New(logging.NewHandler(jsonHandler, redactor))
 }
 
@@ -102,4 +133,28 @@ func (c *Config) LoadDotEnv(configFile string) error {
 // from envconfig json tag
 func (c *Config) ParseEnv() error {
 	return envconfig.Process("", c)
+}
+
+// defaultEncryptionKey is the ENCRYPTION_KEY default, repeated from the
+// struct tag (a test keeps the two equal). It is public, in this repository,
+// so it protects nothing.
+const defaultEncryptionKey = "local-dev-key-do-not-use-in-prod"
+
+// checkEncryptionKey refuses a key AES cannot use, whatever the store: it
+// would otherwise surface only at the first /login, as a failure to encrypt
+// the password. And it refuses the public default with a persistent store,
+// which holds the athletes' passwords and their WodBuster sessions, bearer
+// credentials anyone with the database and this repository could read. The
+// in-memory store loses everything on exit, so the default is fine there.
+func (c *Config) checkEncryptionKey() error {
+	switch len(c.EncryptionKey) {
+	case 16, 24, 32:
+	default:
+		return fmt.Errorf("ENCRYPTION_KEY is %d bytes; AES needs 16, 24 or 32", len(c.EncryptionKey))
+	}
+	if c.StorageType == "mongodb" && c.EncryptionKey == defaultEncryptionKey {
+		return errors.New("ENCRYPTION_KEY is the public default; set a secret one (16, 24 or 32 bytes) " +
+			"before storing passwords and sessions in MongoDB")
+	}
+	return nil
 }

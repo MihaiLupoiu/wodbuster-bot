@@ -10,6 +10,7 @@ import (
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/utils"
+	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
 )
 
 var (
@@ -39,16 +40,36 @@ type Storage interface {
 	// Booking attempts are the history of each weekly run, one per class and week.
 	SaveBookingAttempt(ctx context.Context, attempt models.BookingAttempt) error
 	UpdateBookingStatus(ctx context.Context, attemptID string, status string, errorMsg string) error
+	// Sessions are each athlete's stored WodBuster login, one per chat id,
+	// kept apart from the user. GetSession's ok is false when there is none;
+	// an error means the store could not answer.
+	SaveSession(ctx context.Context, s models.StoredSession) error
+	GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error)
+	DeleteSession(ctx context.Context, chatID int64) error
+	// ReplaceSession and DeleteSessionIfUnchanged act only if the stored
+	// session's UpdatedAt is still prevUpdatedAt; ok is false otherwise. The
+	// refresh holds a session for minutes, and a /login or /disable in that
+	// time must win over it.
+	ReplaceSession(ctx context.Context, prevUpdatedAt time.Time, s models.StoredSession) (bool, error)
+	DeleteSessionIfUnchanged(ctx context.Context, chatID int64, prevUpdatedAt time.Time) (bool, error)
 }
 
 // Booker is the bot's view of pkg/wodbuster, implemented by internal/booking.
 //
-// Authenticate answers one question — do these credentials work — and keeps
-// nothing: a WodBuster session is a session cookie, so it will not survive
-// until the opening. Every run logs in again, which is why the password is
-// stored (encrypted) and the session is not.
+// Authenticate logs in once and returns the session. The password is still
+// stored (encrypted): the browser login stays the fallback whenever a stored
+// session stops working.
 type Booker interface {
-	Authenticate(ctx context.Context, email, password string) error
+	Authenticate(ctx context.Context, email, password string) (wodbuster.Session, error)
+	// Login logs in the way a run does: retries, the login gate, onRetry
+	// hearing about each failure that will be tried again.
+	Login(ctx context.Context, email, password string,
+		onRetry booking.LoginRetryFunc) (wodbuster.Session, error)
+	// CheckSession asks WodBuster whether it still accepts sess, with one
+	// schedule read, and returns the session as renewed by the server.
+	// wodbuster.ErrSessionExpired means refused; ErrChallenge and other
+	// errors mean nothing was learned.
+	CheckSession(ctx context.Context, sess wodbuster.Session) (wodbuster.Session, error)
 	Run(ctx context.Context, email, password string, targets []booking.Target,
 		o booking.RunOptions) ([]booking.Outcome, error)
 }
@@ -125,6 +146,15 @@ func (m *Manager) SetUserStatus(ctx context.Context, chatID int64, status string
 	}
 	m.logger.Info("user status changed", "chat_id", chatID, "email", user.Email,
 		"from", was, "to", status)
+	// A disabled account is not booked for, so its session is a credential
+	// nobody needs. Approving it again later stores a new one at the next
+	// /login or Sunday preflight.
+	if status == models.StatusDisabled {
+		if err := m.storage.DeleteSession(ctx, chatID); err != nil {
+			m.logger.Error("could not delete the disabled user's session", "chat_id", chatID, "error", err)
+		}
+		m.bookingScheduler.updateSessionGauges(ctx)
+	}
 	return user, nil
 }
 
@@ -167,7 +197,8 @@ func (m *Manager) GetUser(ctx context.Context, chatID int64) (models.User, bool)
 func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, password string) error {
 	// A real login against the real site, so that bad credentials are caught
 	// here and not at noon on Sunday.
-	if err := m.booker.Authenticate(ctx, email, password); err != nil {
+	sess, err := m.booker.Authenticate(ctx, email, password)
+	if err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidWODBusterLogin, err)
 	}
 
@@ -200,8 +231,27 @@ func (m *Manager) LogInAndSave(ctx context.Context, chatID int64, email, passwor
 	user.UpdatedAt = now
 
 	m.logger.Info("Successfully validated login and saved user", "chat_id", chatID, "email", email)
-	return m.storage.SaveUser(ctx, user)
+	if err := m.storage.SaveUser(ctx, user); err != nil {
+		return err
+	}
+	// Only an account that is booked for keeps a credential. A newcomer gets
+	// one at the first preflight after approval; a disabled account never.
+	if !user.IsActive() {
+		m.logger.Info("account not active; the session is not stored", "chat_id", chatID, "status", user.Status)
+	}
+	m.bookingScheduler.storeFreshSession(ctx, user, sess, sourceLogin)
+	return nil
 }
+
+// GetSession is the athlete's stored session, for /status and /users. It
+// never leaves this package decrypted.
+func (m *Manager) GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error) {
+	return m.storage.GetSession(ctx, chatID)
+}
+
+// StoresSessions says whether sessions are stored at all: false with
+// SESSION_REUSE=off.
+func (m *Manager) StoresSessions() bool { return m.bookingScheduler.storesSessions() }
 
 func (m *Manager) GetDecryptedPassword(ctx context.Context, chatID int64) (string, error) {
 	user, exists := m.storage.GetUser(ctx, chatID)
@@ -245,8 +295,8 @@ func (m *Manager) CancelBooking(chatID int64) bool {
 }
 
 // TestUserSession checks that the stored credentials still work, by logging in
-// with them. There is no stored session to test any more — and "can I log in
-// right now" is the question that actually matters before an opening.
+// with them: "can I log in right now" is the question that matters before an
+// opening, whatever the stored session says.
 func (m *Manager) TestUserSession(ctx context.Context, chatID int64) error {
 	user, exists := m.storage.GetUser(ctx, chatID)
 	if !exists {
@@ -256,7 +306,15 @@ func (m *Manager) TestUserSession(ctx context.Context, chatID int64) error {
 	if err != nil {
 		return fmt.Errorf("could not read the stored password: %w", err)
 	}
-	return m.booker.Authenticate(ctx, user.Email, password)
+	sess, err := m.booker.Authenticate(ctx, user.Email, password)
+	if err != nil {
+		return err
+	}
+	// Kept, since it is the newest session the athlete has. Like every login
+	// with "remember this device", it has added a remembered device on
+	// WodBuster's side whether it is kept or not.
+	m.bookingScheduler.storeFreshSession(ctx, user, sess, sourceTest)
+	return nil
 }
 
 // Rehearse books nothing and reports what the run would find right now.

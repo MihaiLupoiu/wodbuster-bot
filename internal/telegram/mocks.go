@@ -181,6 +181,78 @@ func (_c *MockBotManager_GetScheduleInfo_Call) RunAndReturn(run func() string) *
 	return _c
 }
 
+// GetSession provides a mock function for the type MockBotManager
+func (_mock *MockBotManager) GetSession(ctx context.Context, chatID int64) (models.StoredSession, bool, error) {
+	ret := _mock.Called(ctx, chatID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetSession")
+	}
+
+	var r0 models.StoredSession
+	var r1 bool
+	var r2 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64) (models.StoredSession, bool, error)); ok {
+		return returnFunc(ctx, chatID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64) models.StoredSession); ok {
+		r0 = returnFunc(ctx, chatID)
+	} else {
+		r0 = ret.Get(0).(models.StoredSession)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, int64) bool); ok {
+		r1 = returnFunc(ctx, chatID)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, int64) error); ok {
+		r2 = returnFunc(ctx, chatID)
+	} else {
+		r2 = ret.Error(2)
+	}
+	return r0, r1, r2
+}
+
+// MockBotManager_GetSession_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetSession'
+type MockBotManager_GetSession_Call struct {
+	*mock.Call
+}
+
+// GetSession is a helper method to define mock.On call
+//   - ctx context.Context
+//   - chatID int64
+func (_e *MockBotManager_Expecter) GetSession(ctx interface{}, chatID interface{}) *MockBotManager_GetSession_Call {
+	return &MockBotManager_GetSession_Call{Call: _e.mock.On("GetSession", ctx, chatID)}
+}
+
+func (_c *MockBotManager_GetSession_Call) Run(run func(ctx context.Context, chatID int64)) *MockBotManager_GetSession_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 int64
+		if args[1] != nil {
+			arg1 = args[1].(int64)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockBotManager_GetSession_Call) Return(storedSession models.StoredSession, b bool, err error) *MockBotManager_GetSession_Call {
+	_c.Call.Return(storedSession, b, err)
+	return _c
+}
+
+func (_c *MockBotManager_GetSession_Call) RunAndReturn(run func(ctx context.Context, chatID int64) (models.StoredSession, bool, error)) *MockBotManager_GetSession_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetUser provides a mock function for the type MockBotManager
 func (_mock *MockBotManager) GetUser(ctx context.Context, chatID int64) (models.User, bool) {
 	ret := _mock.Called(ctx, chatID)
@@ -702,6 +774,50 @@ func (_c *MockBotManager_SetUserStatus_Call) Return(user models.User, err error)
 }
 
 func (_c *MockBotManager_SetUserStatus_Call) RunAndReturn(run func(ctx context.Context, chatID int64, status string) (models.User, error)) *MockBotManager_SetUserStatus_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// StoresSessions provides a mock function for the type MockBotManager
+func (_mock *MockBotManager) StoresSessions() bool {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for StoresSessions")
+	}
+
+	var r0 bool
+	if returnFunc, ok := ret.Get(0).(func() bool); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	return r0
+}
+
+// MockBotManager_StoresSessions_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'StoresSessions'
+type MockBotManager_StoresSessions_Call struct {
+	*mock.Call
+}
+
+// StoresSessions is a helper method to define mock.On call
+func (_e *MockBotManager_Expecter) StoresSessions() *MockBotManager_StoresSessions_Call {
+	return &MockBotManager_StoresSessions_Call{Call: _e.mock.On("StoresSessions")}
+}
+
+func (_c *MockBotManager_StoresSessions_Call) Run(run func()) *MockBotManager_StoresSessions_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockBotManager_StoresSessions_Call) Return(b bool) *MockBotManager_StoresSessions_Call {
+	_c.Call.Return(b)
+	return _c
+}
+
+func (_c *MockBotManager_StoresSessions_Call) RunAndReturn(run func() bool) *MockBotManager_StoresSessions_Call {
 	_c.Call.Return(run)
 	return _c
 }

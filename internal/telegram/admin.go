@@ -111,19 +111,41 @@ func signupMessage(u models.User, username string) string {
 		who, u.ChatID, u.ChatID)
 }
 
+// storeTimeout bounds the storage reads a command makes, so a slow store
+// cannot hold a reply, or a handler goroutine, forever.
+const storeTimeout = 10 * time.Second
+
 func (b *Bot) handleUsers(ctx context.Context, chatID int64) {
+	ctx, cancel := context.WithTimeout(ctx, storeTimeout)
+	defer cancel()
 	users, err := b.manager.ListUsers(ctx)
 	if err != nil {
 		b.logger.Error("could not list the users", "err", err)
 		b.Notify(chatID, "❌ Could not read the users: "+err.Error())
 		return
 	}
-	b.Notify(chatID, formatUsers(users))
+	// With SESSION_REUSE=off nobody has a session, and that is no news.
+	sessions := map[int64]bool{}
+	for _, u := range users {
+		if !u.IsActive() || !b.manager.StoresSessions() {
+			continue
+		}
+		_, ok, err := b.manager.GetSession(ctx, u.ChatID)
+		if err != nil {
+			b.logger.Error("could not read a stored session", "chat_id", u.ChatID, "err", err)
+			ok = true // unknown: do not raise a false alarm
+		}
+		sessions[u.ChatID] = ok
+	}
+	b.Notify(chatID, formatUsers(users, sessions))
 }
 
 // formatUsers lists pending accounts first, since they are the ones waiting
-// on the admin.
-func formatUsers(users []models.User) string {
+// on the admin. hasSession says, for active users, whether a WodBuster session
+// is stored; an active user without one is marked, since Sunday's run will
+// have to log in for them. Whether a stored session still works is not known
+// here, so the mark says only that none is stored.
+func formatUsers(users []models.User, hasSession map[int64]bool) string {
 	if len(users) == 0 {
 		return "Nobody has logged in yet."
 	}
@@ -143,6 +165,9 @@ func formatUsers(users []models.User) string {
 			len(u.ClassBookingSchedules))
 		if u.IsAdmin() {
 			line += " · admin"
+		}
+		if ok, known := hasSession[u.ChatID]; u.IsActive() && known && !ok {
+			line += " · ⚠️ no stored session"
 		}
 		lines = append(lines, line)
 	}
@@ -242,6 +267,51 @@ func announcementRecipients(users []models.User) []int64 {
 		}
 	}
 	return ids
+}
+
+// sessionLine describes a stored WodBuster session for /status. It says what
+// is known, not more: when WodBuster last accepted it, and when its login
+// cookie runs out. A session the refresh has not touched for a day is flagged,
+// because the refresh runs twice a day. The expiry date is given in loc, the
+// gym's time zone, so it is the day the athlete would say; nil means UTC.
+func sessionLine(st models.StoredSession, ok bool, err error, now time.Time, loc *time.Location) string {
+	if err != nil {
+		return "❓ could not be read right now"
+	}
+	if !ok {
+		return "⚠️ none stored: the next run will log in"
+	}
+	icon, verb := "✅", "stored"
+	if now.Sub(st.LastUsedAt) > 24*time.Hour {
+		icon, verb = "⚠️", "stored but not checked recently"
+	}
+	s := fmt.Sprintf("%s %s · last accepted by WodBuster %s", icon, verb, ago(now.Sub(st.LastUsedAt)))
+	if st.AuthExpiresAt.IsZero() {
+		return s + " · login cookie ends with the session"
+	}
+	return s + " · login cookie expires " + st.AuthExpiresAt.In(orUTC(loc)).Format("2006-01-02")
+}
+
+func orUTC(loc *time.Location) *time.Location {
+	if loc == nil {
+		return time.UTC
+	}
+	return loc
+}
+
+// ago is a duration said the way a person would: "just now", "5m ago",
+// "3h ago", "2d ago".
+func ago(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d/time.Minute))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d/time.Hour))
+	default:
+		return fmt.Sprintf("%dd ago", int(d/(24*time.Hour)))
+	}
 }
 
 func statusLine(u models.User) string {

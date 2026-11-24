@@ -14,6 +14,7 @@ import (
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/booking"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/models"
 	"github.com/MihaiLupoiu/wodbuster-bot/internal/utils"
+	"github.com/MihaiLupoiu/wodbuster-bot/pkg/wodbuster"
 )
 
 // BookingContext is one athlete's run, while it is happening.
@@ -56,19 +57,62 @@ type BookingScheduler struct {
 	// the gym's zone. Empty turns it off.
 	loginCheckSpec string
 	loginFailing   atomic.Bool // the last login check failed
+
+	// sessionRefreshSpec is when stored sessions are checked and renewed, as
+	// a cron spec in the gym's zone. Empty turns it off. refreshGap spaces
+	// the athletes' checks apart.
+	sessionRefreshSpec string
+	refreshGap         time.Duration
+	refreshGapJitter   time.Duration
+	refreshStartJitter time.Duration
+
+	// preflightSpec is when the Sunday session preflight runs; reuseMode is
+	// SESSION_REUSE (off, shadow). See preflight.go.
+	preflightSpec        string
+	reuseMode            ReuseMode
+	preflightQuietWhenOK bool
+	shadowJitter         time.Duration
+	// preflightStarted is when this week's preflight began, as Unix nanos;
+	// the run books only with a session logged in since.
+	preflightStarted atomic.Int64
+
+	// weekRunning is set while the weekly run is going, so neither the
+	// preflight nor the refresh starts during one. The run stops either one
+	// that is still going, through preflightJob and refreshJob.
+	weekRunning  atomic.Bool
+	preflightJob runBlocker
+	refreshJob   runBlocker
+
+	// gaugesMu serialises updateSessionGauges.
+	gaugesMu sync.Mutex
+
+	// life ends when the scheduler stops, and with it every job that
+	// derives its context from it.
+	life     context.Context
+	stopLife context.CancelFunc
 }
 
 func NewBookingScheduler(storage Storage, booker Booker, opening Opening,
 	encryptionKey string, logger *slog.Logger) *BookingScheduler {
 
+	life, stopLife := context.WithCancel(context.Background())
 	return &BookingScheduler{
-		storage:        storage,
-		booker:         booker,
-		opening:        opening,
-		encryptionKey:  encryptionKey,
-		logger:         logger,
-		cron:           cron.New(cron.WithLocation(opening.Location)),
-		activeBookings: make(map[int64]*BookingContext),
+		storage:            storage,
+		booker:             booker,
+		opening:            opening,
+		encryptionKey:      encryptionKey,
+		logger:             logger,
+		cron:               cron.New(cron.WithLocation(opening.Location)),
+		activeBookings:     make(map[int64]*BookingContext),
+		refreshGap:         defaultRefreshGap,
+		refreshGapJitter:   defaultRefreshGapJitter,
+		refreshStartJitter: defaultRefreshStartJitter,
+		shadowJitter:       defaultShadowJitter,
+		// The app sets the configured mode; off keeps a scheduler built
+		// without one (tests, tools) on the old behaviour.
+		reuseMode: ReuseOff,
+		life:      life,
+		stopLife:  stopLife,
 	}
 }
 
@@ -108,8 +152,27 @@ func (bs *BookingScheduler) Start() error {
 		bs.logger.Info("daily login check scheduled", "cron", bs.loginCheckSpec)
 	}
 
+	if bs.sessionRefreshSpec == "" || !bs.storesSessions() {
+		bs.logger.Info("session refresh is off", "session_reuse", bs.reuseMode)
+	} else {
+		if _, err := bs.cron.AddFunc(bs.sessionRefreshSpec, bs.RefreshSessions); err != nil {
+			return fmt.Errorf("failed to schedule the session refresh %q: %w", bs.sessionRefreshSpec, err)
+		}
+		bs.logger.Info("session refresh scheduled", "cron", bs.sessionRefreshSpec)
+	}
+
+	if bs.preflightSpec == "" || bs.reuseMode == ReuseOff {
+		bs.logger.Info("session preflight is off", "session_reuse", bs.reuseMode)
+	} else {
+		if _, err := bs.cron.AddFunc(bs.preflightSpec, bs.Preflight); err != nil {
+			return fmt.Errorf("failed to schedule the session preflight %q: %w", bs.preflightSpec, err)
+		}
+		bs.logger.Info("session preflight scheduled", "cron", bs.preflightSpec, "session_reuse", bs.reuseMode)
+	}
+
 	bs.cron.Start()
 	bs.isRunning = true
+	bs.metrics.setReuseMode(bs.reuseMode)
 	bs.logger.Info("booking scheduler started",
 		"cron", spec, "timezone", bs.opening.Location.String(),
 		"opening", bs.opening.Next(time.Now()).Format(time.RFC1123))
@@ -118,11 +181,27 @@ func (bs *BookingScheduler) Start() error {
 	// gone — the container was down, restarted, or its host was suspended past
 	// the hour. The week is open and the places are going; chase them now
 	// rather than next Sunday. Anything already booked comes back as
-	// already-booked, so a restart during the window is harmless.
+	// already-booked, so a restart during the window is harmless. First, so
+	// nothing below delays it.
 	if bs.opening.InWindow(time.Now()) {
 		bs.logger.Info("starting inside the booking window; running now",
 			"opened_at", bs.opening.Target(time.Now()).Format(time.RFC1123))
 		go bs.processAllBookings()
+	}
+
+	if bs.storesSessions() {
+		// The session gauges are otherwise set by the first refresh, up to
+		// 12 hours away; a restart would read as "no sessions" until then.
+		// In the background: a slow store must not hold up the bot.
+		go bs.updateSessionGauges(bs.life)
+	} else {
+		// Sessions left from shadow weeks: nothing reads them now, and
+		// nothing else would ever delete them.
+		go func() {
+			ctx, cancel := context.WithTimeout(bs.life, time.Minute)
+			defer cancel()
+			bs.dropAllSessions(ctx)
+		}()
 	}
 
 	return nil
@@ -135,6 +214,9 @@ func (bs *BookingScheduler) Stop() {
 
 	bs.cron.Stop()
 	bs.isRunning = false
+	// Ends a preflight, refresh or login check in flight; their contexts
+	// derive from life.
+	bs.stopLife()
 
 	bs.activeBookingsMux.Lock()
 	for chatID, b := range bs.activeBookings {
@@ -159,6 +241,15 @@ func (bs *BookingScheduler) processAllBookings() { bs.runWeek(time.Now()) }
 
 // runWeek is the weekly run as of now; separate so a test can run two weeks.
 func (bs *BookingScheduler) runWeek(now time.Time) {
+	bs.weekRunning.Store(true)
+	defer bs.weekRunning.Store(false)
+	// The preflight's deadline is this moment, so it is normally done, and the
+	// refresh is normally hours away; whichever is still going stops here
+	// rather than logging in alongside the run.
+	bs.stopRunBlockers()
+	// Whatever the run stored, the gauges show it afterwards.
+	defer bs.updateSessionGauges(bs.life)
+
 	opensAt := bs.opening.Target(now)
 	bs.logger.Info("booking run starting",
 		"opens_at", opensAt.Format(time.RFC1123),
@@ -168,7 +259,8 @@ func (bs *BookingScheduler) runWeek(now time.Time) {
 	// opening minus the head start — not against the opening itself.
 	bs.metrics.observeRunLateness(opensAt.Add(-bs.opening.StartBefore), now)
 
-	ctx := context.Background()
+	// Stop cancels the runs in flight as well; their recording detaches.
+	ctx := bs.life
 	users, err := bs.storage.ListUsers(ctx)
 	if err != nil {
 		bs.logger.Error("could not read the athletes", "error", err)
@@ -189,22 +281,22 @@ func (bs *BookingScheduler) runWeek(now time.Time) {
 	// The admins hear about the first failed login of the run straight away:
 	// one is enough to go and look, and on 2026-11-15 every one of eighteen
 	// failed the same way.
-	var alertAdmin sync.Once
+	var alerts loginAlerts
 
 	var wg sync.WaitGroup
 	for chatID, attempts := range byAthlete {
-		wg.Add(1)
-		go func(chatID int64, attempts []models.BookingAttempt) {
-			defer wg.Done()
+		wg.Go(func() {
 			bs.runForAthlete(ctx, chatID, attempts, RunSettings{
 				OpensAt: opensAt,
 				OnLoginRetry: func(attempt, of int, err error) {
-					bs.loginTrouble(chatID, opensAt, attempt, of, err, &alertAdmin)
+					bs.loginTrouble(chatID, opensAt, attempt, of, err, &alerts)
 				},
+				alerts: &alerts,
 			})
-		}(chatID, attempts)
+		})
 	}
 	wg.Wait()
+	alerts.wait()
 	bs.metrics.observeRunFinished("completed", time.Since(now))
 	bs.logger.Info("booking run finished", "took", time.Since(now).Round(time.Millisecond))
 }
@@ -223,7 +315,7 @@ func (bs *BookingScheduler) weekAttempts(ctx context.Context, users []models.Use
 	week := opensAt.Format("2006-01-02")
 	out := map[int64][]models.BookingAttempt{}
 	for _, u := range users {
-		if !u.IsAuthenticated || !u.IsActive() || len(u.ClassBookingSchedules) == 0 {
+		if !bookable(u) {
 			continue
 		}
 		for _, c := range u.ClassBookingSchedules {
@@ -268,7 +360,11 @@ type RunSettings struct {
 	GiveUpAfter time.Duration
 
 	// OnLoginRetry hears about each failed login that will be tried again.
-	OnLoginRetry func(attempt, of int, err error)
+	OnLoginRetry booking.LoginRetryFunc
+
+	// alerts holds the warnings OnLoginRetry sent, which the athlete must
+	// get before their results.
+	alerts *loginAlerts
 }
 
 // runForAthlete books every pending class of one athlete in a single run, so
@@ -332,17 +428,44 @@ func (bs *BookingScheduler) runForAthlete(ctx context.Context, chatID int64,
 
 	// Said before the login, so that silence at noon means the run never
 	// started, not that it is still going.
+	var starting sync.WaitGroup
 	if !rs.DryRun {
-		bs.notify(chatID, bs.startingMessage(rs.OpensAt, len(targets)))
+		msg := bs.startingMessage(rs.OpensAt, len(targets))
+		if time.Now().Before(rs.OpensAt) {
+			bs.notify(chatID, msg)
+		} else {
+			// Already open (a restart inside the window): every second
+			// counts, so the message must not hold up the first request.
+			// It is waited for before the results, which must come after it.
+			starting.Go(func() { bs.notify(chatID, msg) })
+		}
 	}
 
-	outcomes, err := bs.booker.Run(runCtx, user.Email, password, targets,
-		booking.RunOptions{
-			OpensAt:      rs.OpensAt,
-			DryRun:       rs.DryRun,
-			GiveUpAfter:  rs.GiveUpAfter,
-			OnLoginRetry: rs.OnLoginRetry,
-		})
+	opts := booking.RunOptions{
+		OpensAt:      rs.OpensAt,
+		DryRun:       rs.DryRun,
+		GiveUpAfter:  rs.GiveUpAfter,
+		OnLoginRetry: rs.OnLoginRetry,
+	}
+	// A real run books with this morning's preflight session when there is
+	// one, and keeps whatever session it ends with. Rehearsals log in as
+	// before until phase 2.
+	var ended *endedSession
+	if !rs.DryRun && bs.storesSessions() {
+		opts.Session = bs.runSession(runCtx, chatID, time.Now())
+		ended = &endedSession{offered: opts.Session != nil}
+		opts.OnSession = ended.set
+	}
+	outcomes, err := bs.booker.Run(runCtx, user.Email, password, targets, opts)
+	starting.Wait()
+	rs.alerts.waitFor(chatID)
+	// Stored after the results are recorded and sent: the athlete's answer
+	// must not wait on the database.
+	defer func() {
+		if sess, reused, ok := ended.get(); ok {
+			bs.storeRunSession(runCtx, chatID, ended.offered, sess, reused)
+		}
+	}()
 	if err != nil {
 		if rs.DryRun {
 			// The caller is standing in Telegram waiting for an answer; it
@@ -440,15 +563,17 @@ func (bs *BookingScheduler) fail(ctx context.Context, chatID int64,
 // opening to book by hand; the admins hear about the first failure of the
 // whole run.
 func (bs *BookingScheduler) loginTrouble(chatID int64, opensAt time.Time,
-	attempt, of int, err error, alertAdmin *sync.Once) {
+	attempt, of int, err error, alerts *loginAlerts) {
 
 	if attempt == 1 {
-		bs.notify(chatID, fmt.Sprintf("⚠️ Logging in to WodBuster failed (try %d of %d). "+
-			"I'm still trying, but if you don't get your results by %s, book your classes by hand.",
-			attempt, of, opensAt.In(bs.opening.Location).Format("15:04")))
+		alerts.toAthlete(chatID, func() {
+			bs.notify(chatID, fmt.Sprintf("⚠️ Logging in to WodBuster failed (try %d of %d). "+
+				"I'm still trying, but if you don't get your results by %s, book your classes by hand.",
+				attempt, of, opensAt.In(bs.opening.Location).Format("15:04")))
+		})
 	}
-	alertAdmin.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	alerts.toAdminsOnce(func() {
+		ctx, cancel := context.WithTimeout(bs.life, 10*time.Second)
 		defer cancel()
 		bs.notifyAdmins(ctx, chatID, fmt.Sprintf("⚠️ Sunday run: a login failed for chat %d (try %d of %d): %v\n"+
 			"Other athletes may follow; each one is told to book by hand if it keeps failing.",
@@ -468,7 +593,7 @@ func (bs *BookingScheduler) CheckLogin() {
 		bs.metrics.observeLoginCheck("skipped")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(bs.life, 5*time.Minute)
 	defer cancel()
 
 	users, err := bs.storage.ListUsers(ctx)
@@ -485,8 +610,9 @@ func (bs *BookingScheduler) CheckLogin() {
 	}
 	user := admins[0]
 	password, err := utils.DecryptPassword(user.Password, bs.encryptionKey)
+	var sess wodbuster.Session
 	if err == nil {
-		err = bs.booker.Authenticate(ctx, user.Email, password)
+		sess, err = bs.booker.Authenticate(ctx, user.Email, password)
 	}
 	if err != nil {
 		bs.logger.Error("login check failed", "chat_id", user.ChatID, "error", err)
@@ -498,6 +624,10 @@ func (bs *BookingScheduler) CheckLogin() {
 		return
 	}
 	bs.logger.Info("login check passed", "chat_id", user.ChatID)
+	// Kept, since it is the newest session the admin has. It does not save
+	// a remembered device: every login with "remember this device" adds one
+	// on WodBuster's side, kept or not.
+	bs.storeFreshSession(ctx, user, sess, sourceLoginCheck)
 	bs.metrics.observeLoginCheck("passed")
 	if bs.loginFailing.Swap(false) {
 		bs.tellAdmins(admins, 0, "✅ Daily login check works again.")
