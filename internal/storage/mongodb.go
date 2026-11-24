@@ -204,7 +204,7 @@ func (m *MongoStorage) UpdateBookingStatus(ctx context.Context, attemptID string
 // SaveSession stores the athlete's session, replacing any older one. Only the
 // session document is written; the user is not touched.
 func (m *MongoStorage) SaveSession(ctx context.Context, s models.StoredSession) error {
-	s.UpdatedAt = time.Now()
+	s.UpdatedAt = sessionStamp()
 	_, err := m.sessionsCollection.ReplaceOne(ctx,
 		bson.M{"chat_id": s.ChatID}, s, options.Replace().SetUpsert(true))
 	if err != nil {
@@ -242,7 +242,7 @@ func (m *MongoStorage) DeleteSession(ctx context.Context, chatID int64) error {
 // else wrote it in between, and their write stands. prevUpdatedAt must come
 // from GetSession, so it carries Mongo's millisecond precision.
 func (m *MongoStorage) ReplaceSession(ctx context.Context, prevUpdatedAt time.Time, s models.StoredSession) (bool, error) {
-	s.UpdatedAt = time.Now()
+	s.UpdatedAt = sessionStamp()
 	res, err := m.sessionsCollection.ReplaceOne(ctx,
 		bson.M{"chat_id": s.ChatID, "updated_at": prevUpdatedAt}, s)
 	if err != nil {

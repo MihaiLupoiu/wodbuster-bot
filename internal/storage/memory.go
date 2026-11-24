@@ -124,7 +124,7 @@ func (m *MemoryStorage) SaveSession(ctx context.Context, s models.StoredSession)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	s.UpdatedAt = time.Now()
+	s.UpdatedAt = sessionStamp()
 	m.sessions[s.ChatID] = s
 	return nil
 }
@@ -157,7 +157,7 @@ func (m *MemoryStorage) ReplaceSession(ctx context.Context, prevUpdatedAt time.T
 	if !ok || !cur.UpdatedAt.Equal(prevUpdatedAt) {
 		return false, nil
 	}
-	s.UpdatedAt = time.Now()
+	s.UpdatedAt = sessionStamp()
 	m.sessions[s.ChatID] = s
 	return true, nil
 }
