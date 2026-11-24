@@ -428,6 +428,7 @@ func (bs *BookingScheduler) runForAthlete(ctx context.Context, chatID int64,
 
 	// Said before the login, so that silence at noon means the run never
 	// started, not that it is still going.
+	var starting sync.WaitGroup
 	if !rs.DryRun {
 		msg := bs.startingMessage(rs.OpensAt, len(targets))
 		if time.Now().Before(rs.OpensAt) {
@@ -435,7 +436,8 @@ func (bs *BookingScheduler) runForAthlete(ctx context.Context, chatID int64,
 		} else {
 			// Already open (a restart inside the window): every second
 			// counts, so the message must not hold up the first request.
-			go bs.notify(chatID, msg)
+			// It is waited for before the results, which must come after it.
+			starting.Go(func() { bs.notify(chatID, msg) })
 		}
 	}
 
@@ -455,6 +457,7 @@ func (bs *BookingScheduler) runForAthlete(ctx context.Context, chatID int64,
 		opts.OnSession = ended.set
 	}
 	outcomes, err := bs.booker.Run(runCtx, user.Email, password, targets, opts)
+	starting.Wait()
 	rs.alerts.waitFor(chatID)
 	// Stored after the results are recorded and sent: the athlete's answer
 	// must not wait on the database.
